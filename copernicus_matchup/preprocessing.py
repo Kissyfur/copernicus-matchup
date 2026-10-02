@@ -13,6 +13,7 @@ import pandas as pd
 import xarray as xr
 
 from copernicus_matchup.config import DataConfig, ProductSpec, RegridConfig
+from copernicus_matchup.layout import RunLayout
 from copernicus_matchup.targets import load_target_table, metadata_to_dataarray, target_to_dataarray
 from copernicus_matchup.features.astronomy import photoperiod_hours
 from copernicus_matchup.features.masks import get_cloud_and_land_masks, valid_water_coverage
@@ -482,13 +483,13 @@ def preprocess_matchups(
     is the only layer entitled to know what the model intends to predict. Omitting it
     leaves the target untransformed.
     """
-    run_root = Path(run_root)
-    datasets_dir = run_root / "datasets"
+    layout = RunLayout(run_root)
+    datasets_dir = layout.datasets
     datasets_dir.mkdir(parents=True, exist_ok=True)
 
     target_transform = target_transform or TargetTransform.none()
 
-    target_table_path = run_root / "processed" / "targets.csv"
+    target_table_path = layout.targets
     targets = pd.read_csv(target_table_path, parse_dates=["time"]) if target_table_path.exists() else load_target_table(config.target)
 
     target_da = target_to_dataarray(targets, target_names=config.target.target_names)
@@ -515,7 +516,7 @@ def preprocess_matchups(
     artifacts: dict[str, Path] = {"target": target_path, "meta": meta_path}
 
     for product in config.products:
-        matchup_path = run_root / "processed" / "matchups" / f"{product.name}.nc"
+        matchup_path = layout.product_matchup(product.name)
         if not matchup_path.exists():
             logger.warning(
                 "Skipping product '%s': no matchup file at %s. Its feature group will be missing "

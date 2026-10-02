@@ -26,17 +26,40 @@ Add `[excel]` if your observation table is `.xls`/`.xlsx` rather than `.csv`.
 
 ## Use
 
+Hand it a config and a run directory, and it builds the cubes:
+
 ```python
-from copernicus_matchup import load_data_config, preprocess_matchups
-from copernicus_matchup.preprocessing import TargetTransform
+from copernicus_matchup import TargetTransform, build_dataset, load_data_config
 
 config = load_data_config("data.yaml")
-artifacts = preprocess_matchups(
+artifacts = build_dataset(
     config,
     run_root="outputs/my_run",
     target_transform=TargetTransform(transform="log", floor={"method": "positive_quantile", "q": 0.01}),
 )
 # {'target': ..., 'meta': ..., 'optics': ..., 'nut': ...}
+```
+
+`build_dataset` is the three stages in order. Run them separately when you want to
+download once and re-matchup repeatedly, or matchup once and re-preprocess with different
+transforms:
+
+```python
+from copernicus_matchup import create_matchups, download_products, preprocess_matchups
+
+download_products(config, run_root)          # local products saved; remote ones recorded
+create_matchups(config, run_root)            # target-centred windows per product
+preprocess_matchups(config, run_root)        # aligned cubes per feature group
+```
+
+Each stage skips work that already exists unless given `overwrite=True`, so re-running is
+cheap. `RunLayout` names every path they use:
+
+```python
+from copernicus_matchup import RunLayout
+
+layout = RunLayout("outputs/my_run")
+layout.raw, layout.targets, layout.matchups, layout.datasets
 ```
 
 A minimal config:
@@ -130,4 +153,5 @@ pytest -q
 ## Status
 
 Extracted from a Pseudo-nitzschia retrieval project, where it builds the environmental cubes.
-The Python API is stable; there is no command-line interface yet.
+The Python API is stable; there is no command-line interface yet, though
+`build_dataset(load_data_config(path), run_root)` is all one would need to wrap.

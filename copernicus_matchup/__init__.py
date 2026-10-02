@@ -19,7 +19,9 @@ from copernicus_matchup.config import (
     TargetConfig,
     load_data_config,
 )
+from copernicus_matchup.layout import RunLayout
 from copernicus_matchup.preprocessing import TargetTransform, preprocess_matchups
+from copernicus_matchup.stages import build_dataset, create_matchups, download_products
 
 __all__ = [
     "DataConfig",
@@ -27,11 +29,15 @@ __all__ = [
     "PreprocessConfig",
     "ProductSpec",
     "RegridConfig",
+    "RunLayout",
     "TargetConfig",
     "TargetTransform",
+    "build_dataset",
+    "create_matchups",
+    "download_products",
     "load_data_config",
     "preprocess_matchups",
     "__version__",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

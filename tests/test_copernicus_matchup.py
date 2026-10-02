@@ -6,6 +6,8 @@ including the clipped-window concat failure and the degenerate-axis broadcast.
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -20,6 +22,8 @@ from copernicus_matchup.config import (
     TargetConfig,
 )
 from copernicus_matchup.features.astronomy import photoperiod_hours
+from copernicus_matchup.layout import RunLayout
+from copernicus_matchup.stages import build_dataset, create_matchups, download_products
 from copernicus_matchup.features.regrid import resample_group_to_reference
 from copernicus_matchup.matchups import match_observations
 from copernicus_matchup.preprocessing import (
@@ -616,3 +620,116 @@ def test_data_config_also_accepts_a_wrapping_data_block(tmp_path):
 
     assert config.preprocess.time_limit == 9
     assert [p.name for p in config.products] == ["reflectance"]
+
+
+def test_run_layout_names_match_the_documented_contract(tmp_path):
+    layout = RunLayout(tmp_path / "run")
+
+    assert layout.raw == tmp_path / "run" / "raw"
+    assert layout.processed == tmp_path / "run" / "processed"
+    assert layout.targets == tmp_path / "run" / "processed" / "targets.csv"
+    assert layout.matchups == tmp_path / "run" / "processed" / "matchups"
+    assert layout.datasets == tmp_path / "run" / "datasets"
+    assert layout.product_matchup("optics") == layout.matchups / "optics.nc"
+    assert layout.product_unmatched("optics") == layout.matchups / "optics_unmatched.csv"
+    assert layout.remote_marker("optics") == layout.raw / "optics.remote.json"
+
+    layout.mkdirs("raw", "matchups")
+    assert layout.raw.is_dir() and layout.matchups.is_dir()
+    # a string root is accepted and normalized
+    assert RunLayout(str(tmp_path)).root == tmp_path
+
+
+def test_download_writes_a_marker_for_remote_products_without_materializing(tmp_path):
+    """A whole Copernicus dataset dwarfs the windows a run needs, so the download stage
+    records how to open a remote product and leaves the slicing to the matchup stage."""
+    config = DataConfig(
+        target=TargetConfig(path=str(tmp_path / "obs.csv"), target_column="y"),
+        products=[
+            ProductSpec(
+                name="reflectance",
+                dataset_ids=["some-dataset"],
+                variables=["RRS412"],
+                feature_group="optics",
+            )
+        ],
+    )
+
+    artifacts = download_products(config, tmp_path / "run")
+
+    marker = artifacts["reflectance"]
+    assert marker.name == "reflectance.remote.json"
+    recorded = json.loads(marker.read_text(encoding="utf-8"))
+    assert recorded["dataset_ids"] == ["some-dataset"]
+    assert recorded["variables"] == ["RRS412"]
+    # nothing else was written: no NetCDF for the full product
+    assert list((tmp_path / "run" / "raw").glob("*.nc")) == []
+
+
+def test_download_and_matchup_run_from_a_config_file_for_a_local_product(tmp_path):
+    """The shape a CLI wants: hand it a config path, get artifacts, no modelling config.
+
+    Uses a local NetCDF product so the Copernicus client is not needed.
+    """
+    lats = np.round(np.arange(40.0, 40.4, 0.05), 4)
+    lons = np.round(np.arange(10.0, 10.4, 0.05), 4)
+    times = pd.date_range("2020-01-01", periods=5)
+    xr.Dataset(
+        {"RRS412": (("time", "latitude", "longitude"),
+                    np.random.default_rng(0).random((len(times), len(lats), len(lons))) + 0.1)},
+        coords={"time": times, "latitude": lats, "longitude": lons},
+    ).to_netcdf(tmp_path / "product.nc")
+
+    obs = tmp_path / "obs.csv"
+    pd.DataFrame(
+        {
+            "Id": [1, 2, 3],
+            "lat": [40.1, 40.15, 40.2],
+            "lon": [10.1, 10.15, 10.2],
+            "time": [times[2]] * 3,
+            "y": [0.002, 0.004, 0.008],
+        }
+    ).to_csv(obs, index=False)
+
+    config_path = tmp_path / "data.yaml"
+    config_path.write_text(
+        f"target:\n"
+        f"  path: {obs.as_posix()}\n"
+        f"  target_column: y\n"
+        f"products:\n"
+        f"  - name: reflectance\n"
+        f"    source: local\n"
+        f"    source_path: {(tmp_path / 'product.nc').as_posix()}\n"
+        f"    dataset_ids: []\n"
+        f"    variables: [RRS412]\n"
+        f"    feature_group: optics\n"
+        f"    preprocess:\n"
+        f"      interpolate_dims: [lat, lon, time]\n"
+        f"matchup:\n"
+        f"  lat_window: 0.06\n"
+        f"  lon_window: 0.06\n"
+        f"  time_window_days: 1\n"
+        f"  time_threshold_days: 1\n"
+        f"preprocess:\n"
+        f"  time_limit: 2\n"
+        f"  time_selection: centered\n"
+        f"  add_cloud_land_masks: false\n"
+        f"  fillna: 0.0\n",
+        encoding="utf-8",
+    )
+
+    from copernicus_matchup import build_dataset, load_data_config
+
+    config = load_data_config(config_path)
+    artifacts = build_dataset(config, tmp_path / "run")
+
+    layout = RunLayout(tmp_path / "run")
+    assert layout.raw_product("reflectance").exists()
+    assert layout.product_matchup("reflectance").exists()
+    assert layout.targets.exists()
+
+    assert set(artifacts) == {"target", "meta", "optics"}
+    optics = xr.load_dataarray(artifacts["optics"])
+    assert optics.sizes["Id"] == 3
+    assert optics.sizes["time"] == 2
+    assert [str(v) for v in optics["variable"].values] == ["RRS412"]
