@@ -98,6 +98,23 @@ regrid:
 Sections may also be wrapped in a `data:` block, so a project that adds its own modelling
 sections alongside can keep one file.
 
+## Command line
+
+Installing the package puts `copernicus-matchup` on your PATH. It is the Python API with
+a config path, for use without a surrounding project:
+
+```bash
+copernicus-matchup --config data.yaml --run-root outputs/my_run     --target-transform log --target-floor-quantile 0.01
+```
+
+It prints a JSON summary of what it wrote. `--stage` runs one stage at a time (repeatable),
+which is how you re-matchup without re-downloading:
+
+```bash
+copernicus-matchup --config data.yaml --run-root outputs/my_run --stage download
+copernicus-matchup --config data.yaml --run-root outputs/my_run --stage matchup --stage preprocess
+```
+
 ## Output contract
 
 One NetCDF `DataArray` per feature group, named after the group:
@@ -153,5 +170,4 @@ pytest -q
 ## Status
 
 Extracted from a Pseudo-nitzschia retrieval project, where it builds the environmental cubes.
-The Python API is stable; there is no command-line interface yet, though
-`build_dataset(load_data_config(path), run_root)` is all one would need to wrap.
+The Python API and the CLI are both stable.

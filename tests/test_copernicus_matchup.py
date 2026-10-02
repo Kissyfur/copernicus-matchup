@@ -733,3 +733,109 @@ def test_download_and_matchup_run_from_a_config_file_for_a_local_product(tmp_pat
     assert optics.sizes["Id"] == 3
     assert optics.sizes["time"] == 2
     assert [str(v) for v in optics["variable"].values] == ["RRS412"]
+
+
+def test_cli_builds_cubes_from_a_config_path(tmp_path, capsys):
+    """The CLI is the whole package from a shell: config file in, cubes out.
+
+    A local NetCDF product keeps the Copernicus client out of the test.
+    """
+    lats = np.round(np.arange(40.0, 40.4, 0.05), 4)
+    lons = np.round(np.arange(10.0, 10.4, 0.05), 4)
+    times = pd.date_range("2020-01-01", periods=5)
+    xr.Dataset(
+        {"RRS412": (("time", "latitude", "longitude"),
+                    np.random.default_rng(1).random((len(times), len(lats), len(lons))) + 0.1)},
+        coords={"time": times, "latitude": lats, "longitude": lons},
+    ).to_netcdf(tmp_path / "product.nc")
+
+    obs = tmp_path / "obs.csv"
+    pd.DataFrame(
+        {
+            "Id": [1, 2, 3],
+            "lat": [40.1, 40.15, 40.2],
+            "lon": [10.1, 10.15, 10.2],
+            "time": [times[2]] * 3,
+            "y": [0.0, 0.004, 0.008],   # a zero, so the floor is exercised
+        }
+    ).to_csv(obs, index=False)
+
+    config_path = tmp_path / "data.yaml"
+    config_path.write_text(
+        f"target:\n"
+        f"  path: {obs.as_posix()}\n"
+        f"  target_column: y\n"
+        f"products:\n"
+        f"  - name: reflectance\n"
+        f"    source: local\n"
+        f"    source_path: {(tmp_path / 'product.nc').as_posix()}\n"
+        f"    dataset_ids: []\n"
+        f"    variables: [RRS412]\n"
+        f"    feature_group: optics\n"
+        f"    preprocess:\n"
+        f"      interpolate_dims: [lat, lon, time]\n"
+        f"matchup:\n"
+        f"  lat_window: 0.06\n"
+        f"  lon_window: 0.06\n"
+        f"  time_window_days: 1\n"
+        f"  time_threshold_days: 1\n"
+        f"preprocess:\n"
+        f"  time_limit: 2\n"
+        f"  time_selection: centered\n"
+        f"  add_cloud_land_masks: false\n"
+        f"  fillna: 0.0\n",
+        encoding="utf-8",
+    )
+
+    from copernicus_matchup.cli import main
+
+    run_root = tmp_path / "run"
+    exit_code = main([
+        "--config", str(config_path),
+        "--run-root", str(run_root),
+        "--target-transform", "log",
+        "--target-floor-quantile", "0.01",
+        "--quiet",
+    ])
+
+    assert exit_code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["stages"] == ["download", "matchup", "preprocess"]
+    assert set(summary["datasets"]) == {"target", "meta", "optics"}
+
+    optics = xr.load_dataarray(summary["datasets"]["optics"])
+    assert optics.sizes["Id"] == 3
+    # the zero target was floored, so the log is finite everywhere
+    target = xr.load_dataarray(summary["datasets"]["target"])
+    assert np.isfinite(target.values).all()
+    assert target.attrs["target_floor_method"] == "positive_quantile"
+
+
+def test_cli_can_run_a_single_stage(tmp_path, capsys):
+    """--stage is what makes re-matchup-without-re-download possible."""
+    obs = tmp_path / "obs.csv"
+    pd.DataFrame({"Id": [1], "lat": [40.1], "lon": [10.1],
+                  "time": ["2020-01-03"], "y": [0.5]}).to_csv(obs, index=False)
+    config_path = tmp_path / "data.yaml"
+    config_path.write_text(
+        f"target:\n"
+        f"  path: {obs.as_posix()}\n"
+        f"  target_column: y\n"
+        f"products:\n"
+        f"  - name: reflectance\n"
+        f"    dataset_ids: [remote-dataset]\n"
+        f"    variables: [RRS412]\n",
+        encoding="utf-8",
+    )
+
+    from copernicus_matchup.cli import main
+
+    run_root = tmp_path / "run"
+    assert main(["--config", str(config_path), "--run-root", str(run_root),
+                 "--stage", "download", "--quiet"]) == 0
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["stages"] == ["download"]
+    assert summary["datasets"] == {}          # preprocess did not run
+    assert RunLayout(run_root).remote_marker("reflectance").exists()
+    assert not RunLayout(run_root).datasets.exists()

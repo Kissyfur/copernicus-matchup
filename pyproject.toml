@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "copernicus-matchup"
-version = "0.1.0"
+version = "0.3.0"
 description = "Match in-situ observations against Copernicus Marine products and build aligned feature cubes."
 requires-python = ">=3.9"
 readme = "README.md"
@@ -32,6 +32,9 @@ dependencies = [
   # Config files are YAML; imported lazily but effectively always needed.
   "PyYAML>=6.0",
 ]
+
+[project.scripts]
+copernicus-matchup = "copernicus_matchup.cli:main"
 
 [project.optional-dependencies]
 # Only the download stage needs this; `open_local_or_remote` works on local NetCDF
