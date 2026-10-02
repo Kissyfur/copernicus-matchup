@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "copernicus-matchup"
+version = "0.1.0"
+description = "Match in-situ observations against Copernicus Marine products and build aligned feature cubes."
+requires-python = ">=3.9"
+readme = "README.md"
+
+# Floors only, deliberately no upper bounds.
+#
+# This package hands its output to consumers as NetCDF and CSV, never as pickles or .npy,
+# so nothing about its in-memory object versions crosses the boundary. That was verified
+# rather than assumed: artifacts written under numpy 2.0.2 / pandas 2.3.3 / xarray 2024.7
+# were read back bit-exactly under numpy 1.24.4 / pandas 2.1.4 / xarray 2023.11 -- same
+# values, dtypes, dims, coords and attrs. A consumer pinned to an older numpy (for
+# example one stuck on numpy<2 for TensorFlow 2.10) can therefore read cubes produced by
+# this package running on the latest numpy, provided the two live in separate
+# environments. In a shared environment pip still resolves a single version per package,
+# so the consumer's ceiling wins; the point of having no ceiling here is that this
+# package never contributes one.
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.1",
+  "xarray>=2023.11",
+  # xarray's `.interp`, used by the regrid and gap-filling steps.
+  "scipy>=1.10",
+  # A netCDF backend for `.to_netcdf` / `.load_dataarray`.
+  "netCDF4>=1.6",
+  # Config files are YAML; imported lazily but effectively always needed.
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Only the download stage needs this; `open_local_or_remote` works on local NetCDF
+# without it, and the import error names the missing package. Kept optional because its
+# own dependency tree is large.
+download = ["copernicusmarine>=2.0"]
+# Target tables given as .xls/.xlsx rather than .csv.
+excel = ["openpyxl>=3.1"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["copernicus_matchup*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
