@@ -4,6 +4,8 @@ from pathlib import Path
 
 import xarray as xr
 
+from copernicus_matchup._io import write_netcdf
+
 from copernicus_matchup.config import ProductSpec
 
 
@@ -72,7 +74,4 @@ def open_local_or_remote(product: ProductSpec, local_path: str | Path | None = N
 
 
 def save_dataset(ds: xr.Dataset, path: str | Path) -> Path:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ds.to_netcdf(path)
-    return path
+    return write_netcdf(ds, path)

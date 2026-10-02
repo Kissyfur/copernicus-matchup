@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from copernicus_matchup._io import write_netcdf
 from copernicus_matchup.config import DataConfig, ProductSpec, RegridConfig
 from copernicus_matchup.layout import RunLayout
 from copernicus_matchup.targets import load_target_table, metadata_to_dataarray, target_to_dataarray
@@ -499,8 +500,7 @@ def preprocess_matchups(
         offset=target_transform.offset,
         floor_config=target_transform.floor,
     )
-    target_path = datasets_dir / "target.nc"
-    target_da.to_netcdf(target_path)
+    target_path = write_netcdf(target_da, datasets_dir / "target.nc")
 
     meta = metadata_to_dataarray(
         targets,
@@ -509,8 +509,7 @@ def preprocess_matchups(
         include_day_metadata=config.target.include_day_metadata,
         include_cyclic_day_metadata=config.target.include_cyclic_day_metadata,
     )
-    meta_path = datasets_dir / "meta.nc"
-    meta.to_netcdf(meta_path)
+    meta_path = write_netcdf(meta, datasets_dir / "meta.nc")
 
     grouped: dict[str, list[xr.DataArray]] = defaultdict(list)
     artifacts: dict[str, Path] = {"target": target_path, "meta": meta_path}
@@ -546,9 +545,7 @@ def preprocess_matchups(
     groups = {name: _use_relative_cube_coordinates(group) for name, group in groups.items()}
 
     for group_name, group in groups.items():
-        path = datasets_dir / f"{group_name}.nc"
-        group.to_netcdf(path)
-        artifacts[group_name] = path
+        artifacts[group_name] = write_netcdf(group, datasets_dir / f"{group_name}.nc")
     return artifacts
 
 

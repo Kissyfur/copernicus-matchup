@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import xarray as xr
 
+from copernicus_matchup._io import write_netcdf
 from copernicus_matchup.config import MatchupConfig, ProductSpec
 from copernicus_matchup.copernicus import open_local_or_remote, rename_common_dimensions
 from copernicus_matchup.targets import ID, LAT, LON, TIME
@@ -155,4 +156,4 @@ def save_matchups(matchups: xr.Dataset | None, unmatched: pd.DataFrame, matchup_
     if matchups is not None:
         matchup_path.parent.mkdir(parents=True, exist_ok=True)
         matchups.load()
-        matchups.to_netcdf(matchup_path)
+        write_netcdf(matchups, matchup_path)

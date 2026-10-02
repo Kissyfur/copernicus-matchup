@@ -128,6 +128,13 @@ One NetCDF `DataArray` per feature group, named after the group:
 
 Read it back with `xarray.load_dataarray(path).sel(Id=ids)`.
 
+Artifacts are always written as **NETCDF4**, stated explicitly rather than left to
+xarray's engine search. Left to the default, an install without the netCDF4 backend falls
+back to scipy and writes NetCDF3, which permits only one unlimited dimension and only at
+index 0 -- so a metadata array with no columns (a zero-length second dimension) was
+written in an illegal layout and could not be reopened at all. Pinning the format keeps
+artifacts reproducible across environments.
+
 ## Transformation order
 
 Applied per product, in this order, because several steps do not commute:

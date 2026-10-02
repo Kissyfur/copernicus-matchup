@@ -7,6 +7,7 @@ including the clipped-window concat failure and the degenerate-axis broadcast.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -839,3 +840,63 @@ def test_cli_can_run_a_single_stage(tmp_path, capsys):
     assert summary["datasets"] == {}          # preprocess did not run
     assert RunLayout(run_root).remote_marker("reflectance").exists()
     assert not RunLayout(run_root).datasets.exists()
+
+
+def test_artifacts_are_written_as_netcdf4_and_an_empty_meta_reads_back(tmp_path):
+    """Regression: a metadata-free run used to write a meta.nc that could not be reopened.
+
+    With no metadata columns requested the metadata array has a zero-length `variable`
+    dimension. NetCDF3 allows only one unlimited dimension and only at index 0, so such
+    an array written as NetCDF3 -- which is what xarray produces when it falls back to
+    the scipy engine -- came back as "NetCDF: NC_UNLIMITED in the wrong index" on read.
+    Fixing the format explicitly is what makes it round-trip.
+    """
+    run_root = tmp_path / "run"
+    matchups_dir = run_root / "processed" / "matchups"
+    matchups_dir.mkdir(parents=True)
+
+    ids = list(range(1, 5))
+    _per_sample_array(ids, [0.0, 1.0], ["nh4"], lambda la, lo: la + lo, n_time=2).to_dataset(
+        dim="variable"
+    ).to_netcdf(matchups_dir / "nutrients.nc")
+
+    pd.DataFrame(
+        {
+            "Id": ids,
+            "lat": [10.0 * i for i in ids],
+            "lon": [10.0 * i for i in ids],
+            "time": pd.date_range("2020-01-01", periods=len(ids)),
+            "target": [0.5 * i for i in ids],
+        }
+    ).to_csv(run_root / "processed" / "targets.csv", index=False)
+
+    config = DataConfig(
+        target=TargetConfig(
+            path=str(run_root / "unused.csv"),
+            target_column="target",
+            # the metadata-free shape the mtag configs use
+            include_spatial_metadata=False,
+            include_day_metadata=False,
+            include_cyclic_day_metadata=False,
+        ),
+        products=[
+            ProductSpec(
+                name="nutrients", dataset_ids=["d"], variables=["nh4"], feature_group="nut",
+                preprocess={"interpolate_dims": ["lat", "lon", "time"]},
+            )
+        ],
+        preprocess=PreprocessConfig(time_limit=2, add_cloud_land_masks=False, fillna=0.0),
+        regrid=RegridConfig(enabled=False),
+    )
+
+    artifacts = preprocess_matchups(config, run_root)
+
+    # no metadata was requested, so the variable axis is empty
+    meta = xr.load_dataarray(artifacts["meta"])
+    assert meta.sizes["variable"] == 0
+    assert meta.sizes["Id"] == len(ids)
+
+    # every artifact is HDF5-based NETCDF4, not NetCDF3
+    for name, path in artifacts.items():
+        head = Path(path).read_bytes()[:4]
+        assert head == b"\x89HDF", f"{name} was not written as NETCDF4 (magic {head!r})"
