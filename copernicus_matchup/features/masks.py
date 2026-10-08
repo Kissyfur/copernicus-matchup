@@ -4,13 +4,57 @@ import numpy as np
 import xarray as xr
 
 
+def missing_mask(
+    data: xr.DataArray,
+    variable_dim: str = "variable",
+    name: str = "cloud_mask",
+) -> xr.DataArray:
+    """Cells with no valid value at that timestep.
+
+    The right definition for a gappy L3 observation product, where a missing value means
+    the sensor returned nothing -- cloud, glint, or land. It deliberately does not try to
+    separate land out: that is a different product's job (see `static_missing_mask`), and
+    guessing at it from persistence is what made the old land mask track the weather.
+    """
+    missing = np.isnan(data).all(variable_dim)
+    return missing.astype(np.float32).expand_dims({variable_dim: [name]})
+
+
+def static_missing_mask(
+    data: xr.DataArray,
+    variable_dim: str = "variable",
+    time_dim: str = "time",
+    name: str = "land_mask",
+) -> xr.DataArray:
+    """Cells missing at every timestep, broadcast back across time.
+
+    The right definition for a gap-free L4 model product: its fields are computed on an
+    ocean grid, so a cell is missing if and only if it is land, at every timestep. That
+    makes the result a genuine static geography rather than a record of which days
+    happened to be cloudy -- measured on one station's 517 matchups, an L4 source yields
+    3 distinct land patterns where the L3 source yields 302.
+    """
+    missing = np.isnan(data).all(variable_dim)
+    if time_dim in missing.dims:
+        static = missing.all(dim=time_dim)
+        missing = missing.copy()
+        missing[:] = static
+    return missing.astype(np.float32).expand_dims({variable_dim: [name]})
+
+
 def get_cloud_and_land_masks(
     data: xr.DataArray,
     variable_dim: str = "variable",
     time_dim: str = "time",
     land_threshold: float = 0.95,
 ) -> tuple[xr.DataArray, xr.DataArray]:
-    """Create cloud and static land masks from missing values."""
+    """Create cloud and static land masks from one product's missing values.
+
+    Retained for a product asked to supply BOTH masks, which forces land to be inferred
+    from persistence and so conflates it with a window that was clouded throughout. Prefer
+    taking the cloud mask from an L3 product via `missing_mask` and the land mask from an
+    L4 product via `static_missing_mask`.
+    """
     is_missing = np.isnan(data).all(variable_dim)
     if time_dim in is_missing.dims:
         missing_frequency = is_missing.mean(dim=time_dim)

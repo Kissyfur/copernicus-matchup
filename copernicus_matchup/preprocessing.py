@@ -17,7 +17,12 @@ from copernicus_matchup.config import DataConfig, ProductSpec, RegridConfig
 from copernicus_matchup.layout import RunLayout
 from copernicus_matchup.targets import load_target_table, metadata_to_dataarray, target_to_dataarray
 from copernicus_matchup.features.astronomy import photoperiod_hours
-from copernicus_matchup.features.masks import get_cloud_and_land_masks, valid_water_coverage
+from copernicus_matchup.features.masks import (
+    get_cloud_and_land_masks,
+    missing_mask,
+    static_missing_mask,
+    valid_water_coverage,
+)
 from copernicus_matchup.features.regrid import resample_group_to_reference
 from copernicus_matchup.features.transforms import interpolate_gaps, monthly_anomaly, positive_quantile
 from copernicus_matchup._utils import as_list
@@ -255,8 +260,21 @@ def _prepare_product_array(
     # around it.
     add_masks = bool(_option(product, "add_cloud_land_masks", defaults.preprocess.add_cloud_land_masks))
     cloud_mask = land_mask = None
+    requested_masks = {
+        str(value)
+        for value in as_list(_option(product, "mask_kinds", ["cloud_mask", "land_mask"]))
+    }
     if add_masks:
-        cloud_mask, land_mask = get_cloud_and_land_masks(data, variable_dim=VARIABLE)
+        if requested_masks == {"cloud_mask"}:
+            # Only cloud wanted, so this is an L3 source and land comes from elsewhere:
+            # every missing cell is simply "no retrieval here, now".
+            cloud_mask = missing_mask(data, variable_dim=VARIABLE)
+        elif requested_masks == {"land_mask"}:
+            # Only land wanted, so this is a gap-free L4 source: missing means land.
+            land_mask = static_missing_mask(data, variable_dim=VARIABLE)
+        else:
+            # Both from one product, which forces land to be guessed from persistence.
+            cloud_mask, land_mask = get_cloud_and_land_masks(data, variable_dim=VARIABLE)
 
     photoperiod = None
     if bool(_option(product, "add_photoperiod", False)):
@@ -292,12 +310,10 @@ def _prepare_product_array(
         data = data.assign_coords({VARIABLE: names})
 
     arrays = [data]
-    if cloud_mask is not None and land_mask is not None:
-        mask_kinds = {str(value) for value in as_list(_option(product, "mask_kinds", ["cloud_mask", "land_mask"]))}
-        if "cloud_mask" in mask_kinds:
-            arrays.append(cloud_mask)
-        if "land_mask" in mask_kinds:
-            arrays.append(land_mask)
+    if cloud_mask is not None and "cloud_mask" in requested_masks:
+        arrays.append(cloud_mask)
+    if land_mask is not None and "land_mask" in requested_masks:
+        arrays.append(land_mask)
     if photoperiod is not None:
         arrays.append(photoperiod)
     data = xr.concat(arrays, dim=VARIABLE, coords="minimal")
@@ -310,8 +326,19 @@ def _prepare_product_array(
     data = _select_time(data, time_limit, selection=str(time_selection))
 
     min_valid_ratio = _option(product, "min_valid_ratio", defaults.preprocess.min_valid_ratio)
-    if min_valid_ratio is not None and "cloud_mask" in data[VARIABLE].values and "land_mask" in data[VARIABLE].values:
-        ratio = valid_water_coverage(data.sel({VARIABLE: "cloud_mask"}), data.sel({VARIABLE: "land_mask"}))
+    present = set(data[VARIABLE].values.tolist())
+    if min_valid_ratio is not None and "cloud_mask" in present:
+        # Land is excluded from the denominator when this product also carries it. Once
+        # land comes from a separate L4 product, it does not -- so coverage becomes the
+        # plain share of cells with a retrieval, over the whole window rather than over
+        # its water part. Both are monotone in cloudiness, which is what the threshold is
+        # for; the land-aware version is simply the stricter of the two.
+        land = (
+            data.sel({VARIABLE: "land_mask"})
+            if "land_mask" in present
+            else xr.zeros_like(data.sel({VARIABLE: "cloud_mask"}))
+        )
+        ratio = valid_water_coverage(data.sel({VARIABLE: "cloud_mask"}), land)
         data = data.isel(Id=(ratio >= float(min_valid_ratio)).values)
 
     fillna = _option(product, "fillna", defaults.preprocess.fillna)

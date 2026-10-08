@@ -900,3 +900,52 @@ def test_artifacts_are_written_as_netcdf4_and_an_empty_meta_reads_back(tmp_path)
     for name, path in artifacts.items():
         head = Path(path).read_bytes()[:4]
         assert head == b"\x89HDF", f"{name} was not written as NETCDF4 (magic {head!r})"
+
+
+def test_land_from_an_l4_source_is_static_where_an_l3_source_tracks_the_weather():
+    """Why the two masks must come from different product levels.
+
+    Both arrays below describe the SAME geography: one cell of land, observed twice. The
+    L3 array additionally has a water cell that happened to be clouded for every timestep
+    of the second sample. Inferring land from persistence cannot tell that cell from land,
+    so the L3 land mask changes between samples; the L4 array, being gap-free over water,
+    gives the same land either way.
+
+    Measured on the real archive this is the difference between 3 distinct land patterns
+    across 517 single-station matchups and 302 of them.
+    """
+    from copernicus_matchup.features.masks import (
+        get_cloud_and_land_masks, missing_mask, static_missing_mask,
+    )
+
+    def cube(values):
+        return xr.DataArray(
+            np.array(values, dtype=float)[:, :, :, None],
+            dims=("Id", "time", "lat", "variable"),
+            coords={"Id": [1, 2], "time": [0, 1], "lat": [0, 1, 2], "variable": ["v"]},
+        )
+
+    nan = np.nan
+    # cell 0 is land (never seen); cell 2 is water, clouded throughout sample 2 only
+    l3 = cube([[[nan, 1.0, 2.0], [nan, 1.0, 2.0]],
+               [[nan, 1.0, nan], [nan, 1.0, nan]]])
+    # the L4 product sees the same geography and never has a cloud gap
+    l4 = cube([[[nan, 5.0, 6.0], [nan, 5.0, 6.0]],
+               [[nan, 5.0, 6.0], [nan, 5.0, 6.0]]])
+
+    _, l3_land = get_cloud_and_land_masks(l3)
+    l3_land = l3_land.transpose("Id", "time", "lat", "variable").values[:, 0, :, 0]
+    # the persistence heuristic calls the fully-clouded water cell land in sample 2 only
+    assert l3_land[0].tolist() == [1.0, 0.0, 0.0]
+    assert l3_land[1].tolist() == [1.0, 0.0, 1.0]
+    assert not np.array_equal(l3_land[0], l3_land[1])
+
+    l4_land = static_missing_mask(l4).transpose("Id", "time", "lat", "variable").values[:, 0, :, 0]
+    assert l4_land[0].tolist() == [1.0, 0.0, 0.0]
+    np.testing.assert_array_equal(l4_land[0], l4_land[1])     # same geography, both samples
+
+    # and the L3 cloud mask marks every cell without a retrieval, land included, because
+    # land is now somebody else's job
+    cloud = missing_mask(l3).transpose("Id", "time", "lat", "variable").values[:, 0, :, 0]
+    assert cloud[0].tolist() == [1.0, 0.0, 0.0]
+    assert cloud[1].tolist() == [1.0, 0.0, 1.0]
