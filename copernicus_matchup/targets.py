@@ -23,7 +23,10 @@ def load_target_table(config: TargetConfig) -> pd.DataFrame:
         raise FileNotFoundError(f"Target table does not exist: {path}")
 
     if path.suffix.lower() in {".xls", ".xlsx"}:
-        data = pd.read_excel(path, sheet_name=config.sheet_name)
+        # pandas reads sheet_name=None as "every sheet" and returns a dict of frames, so an
+        # unset sheet has to be turned into "the first one" here.
+        sheet_name = 0 if config.sheet_name is None else config.sheet_name
+        data = pd.read_excel(path, sheet_name=sheet_name)
     else:
         data = pd.read_csv(path)
 

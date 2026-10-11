@@ -1,0 +1,24 @@
+# Known-good environment for copernicus-matchup: every direct dependency, including both
+# optional extras, pinned to the latest release as of October 2026 and verified with the
+# test suite on Python 3.12. numpy and scipy at these versions need Python >= 3.12.
+#
+# pyproject.toml keeps floors only (see "Dependency policy" in the README), so the package
+# itself still installs on older versions; this file pins what was actually tested.
+#
+#   pip install -r requirements.txt
+#   pip install -e .
+
+# Core
+numpy==2.5.4
+pandas==3.0.6
+xarray==2026.9.0
+scipy==1.18.1
+netCDF4==1.7.4
+PyYAML==6.0.3
+
+# Extra "download": opening remote Copernicus Marine products
+copernicusmarine==2.5.0
+
+# Extra "excel": observation tables as .xlsx (openpyxl) or legacy .xls (xlrd)
+openpyxl==3.1.5
+xlrd==2.0.2

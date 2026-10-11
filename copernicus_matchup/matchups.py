@@ -128,7 +128,14 @@ def match_observations(
     matches = _drop_clipped_windows(matches, unmatched)
     if not matches:
         return None, observations[observations[ID].isin(unmatched)].copy()
-    return xr.concat(matches, dim=ID), observations[observations[ID].isin(unmatched)].copy()
+    # data_vars="all" is stated rather than inherited: each window's variables do not carry
+    # Id yet, and only "all" stacks them along it. xarray is moving the default to None,
+    # which here resolves to "minimal" and leaves the variables un-stacked -- the cubes
+    # come out with no Id dimension at all.
+    return (
+        xr.concat(matches, dim=ID, data_vars="all"),
+        observations[observations[ID].isin(unmatched)].copy(),
+    )
 
 
 def product_matchup_config(product: ProductSpec, default: MatchupConfig) -> MatchupConfig:

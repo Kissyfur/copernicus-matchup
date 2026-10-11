@@ -482,6 +482,27 @@ def test_load_target_table_without_filter_keeps_all_rows(tmp_path):
     assert sorted(data["Id"]) == ["a", "b"]
 
 
+def test_load_target_table_reads_the_first_excel_sheet_by_default(tmp_path):
+    """Regression: with no sheet_name, pandas returned every sheet as a dict and the load
+    failed with "'dict' object has no attribute 'columns'"."""
+    pytest.importorskip("openpyxl")
+    path = tmp_path / "targets.xlsx"
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame(
+            {"ID": ["a", "b"], "lat": [1.0, 2.0], "lon": [1.0, 2.0],
+             "time": ["2020-01-01", "2020-01-02"], "y": [1.0, 2.0]}
+        ).to_excel(writer, sheet_name="observations", index=False)
+        pd.DataFrame({"note": ["not the data"]}).to_excel(writer, sheet_name="readme", index=False)
+
+    data = load_target_table(TargetConfig(path=str(path), target_column="y", id_column="ID"))
+    assert sorted(data["Id"]) == ["a", "b"]
+
+    by_name = load_target_table(
+        TargetConfig(path=str(path), target_column="y", id_column="ID", sheet_name="observations")
+    )
+    assert sorted(by_name["Id"]) == ["a", "b"]
+
+
 def test_preprocess_matchups_builds_cubes_from_a_data_config_alone(tmp_path):
     """The whole point of the split: cubes are built with no modelling config in sight.
 

@@ -41,8 +41,9 @@ copernicus-matchup = "copernicus_matchup.cli:main"
 # without it, and the import error names the missing package. Kept optional because its
 # own dependency tree is large.
 download = ["copernicusmarine>=2.0"]
-# Target tables given as .xls/.xlsx rather than .csv.
-excel = ["openpyxl>=3.1"]
+# Target tables given as .xls/.xlsx rather than .csv: pandas reads .xlsx with openpyxl and
+# legacy .xls with xlrd.
+excel = ["openpyxl>=3.1", "xlrd>=2.0.1"]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
