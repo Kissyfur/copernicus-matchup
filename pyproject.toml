@@ -4,25 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "copernicus-matchup"
-version = "0.5.0"
+version = "0.6.0"
 description = "Match in-situ observations against Copernicus Marine products and build aligned feature cubes."
 requires-python = ">=3.9"
 readme = "README.md"
 
-# Floors only, deliberately no upper bounds.
+# Floors only, deliberately no upper bounds, and every floor is the oldest version the
+# test suite has actually passed on.
 #
-# This package hands its output to consumers as NetCDF and CSV, never as pickles or .npy,
-# so nothing about its in-memory object versions crosses the boundary. That was verified
-# rather than assumed: artifacts written under numpy 2.0.2 / pandas 2.3.3 / xarray 2024.7
-# were read back bit-exactly under numpy 1.24.4 / pandas 2.1.4 / xarray 2023.11 -- same
-# values, dtypes, dims, coords and attrs. A consumer pinned to an older numpy (for
-# example one stuck on numpy<2 for TensorFlow 2.10) can therefore read cubes produced by
-# this package running on the latest numpy, provided the two live in separate
-# environments. In a shared environment pip still resolves a single version per package,
-# so the consumer's ceiling wins; the point of having no ceiling here is that this
-# package never contributes one.
+# The package is meant to be installed into a consuming project's environment without
+# moving anything that project already has: pip leaves an installed version alone when it
+# satisfies the floor, so a floor set too high is what forces an upgrade. numpy is the one
+# that matters. TensorFlow 2.10, the last release with native Windows GPU support, runs on
+# numpy 1.x but does not declare numpy<2, so a numpy floor above the consumer's version
+# sends pip straight to numpy 2 and breaks TensorFlow. Its floor is therefore the lowest
+# pandas 2.1 accepts, and the suite passes there (Python 3.9, numpy 1.22.4, pandas 2.1.0,
+# xarray 2023.11.0, scipy 1.10.0, netCDF4 1.6.0) as well as on the latest releases.
+#
+# Output crosses to consumers as NetCDF and CSV, never as pickles or .npy, so a consumer in
+# a separate environment is not tied to these versions either: artifacts written under
+# numpy 2.0.2 / pandas 2.3.3 / xarray 2024.7 were read back bit-exactly under numpy 1.24.4 /
+# pandas 2.1.4 / xarray 2023.11.
 dependencies = [
-  "numpy>=1.24",
+  "numpy>=1.22.4",
   "pandas>=2.1",
   "xarray>=2023.11",
   # xarray's `.interp`, used by the regrid and gap-filling steps.

@@ -1,82 +1,71 @@
 # copernicus-matchup
 
-Match in-situ observations against Copernicus Marine products and build aligned feature cubes.
+Match in-situ observations against [Copernicus Marine](https://marine.copernicus.eu/) products
+and build aligned feature cubes for machine learning.
 
-You provide a table of observations (where, when, and the value measured) and a list of gridded
-[Copernicus Marine](https://marine.copernicus.eu/) products such as ocean colour, temperature or
-nutrients. For every observation, the package cuts a space–time window out of each product,
-resamples the windows onto a common grid and applies per-channel transformations (log, gap
-filling, cloud/land masks, anomalies and so on). It then writes one aligned NetCDF cube per
-feature group, ready to train a model on.
-
-The package knows nothing about what will be predicted from those cubes. The hand-off happens on
-disk.
+You give it a table of observations (where, when, value) and a list of gridded products such as
+ocean colour, temperature or nutrients. For each observation it cuts a space–time window out of
+every product and transforms the channels (log, gap filling, cloud/land masks, anomalies). It
+then resamples everything onto one grid and writes one NetCDF cube per feature group. What you
+predict from the cubes is up to you.
 
 ```
-observations.csv ─┐
-                  ├─► download ─► matchup ─► preprocess ─► datasets/{target, meta, <group>}.nc
-data.yaml ────────┘
+observations.csv + data.yaml ─► download ─► matchup ─► preprocess ─► datasets/*.nc
 ```
 
 | Stage | What it does |
 |---|---|
-| `download` | Saves local products whole. For remote Copernicus products it only records how to open them: a whole dataset dwarfs the windows a run needs. |
-| `matchup` | Standardises the observation table and cuts a window around every observation in every product. |
-| `preprocess` | Transforms each product, stacks products into feature groups, regrids the groups onto one grid and writes the cubes. |
-
-## Requirements
-
-- **Python 3.12 or newer** for the pinned environment in `requirements.txt` (tested on 3.12).
-- A free **[Copernicus Marine account](https://data.marine.copernicus.eu/register)** to read remote
-  products. You don't need one if every product is a local NetCDF file.
+| `download` | Saves local products. Remote products are only recorded, because the matchup reads just the windows it needs |
+| `matchup` | Cuts a window around every observation in every product |
+| `preprocess` | Transforms, groups and regrids the windows, then writes the cubes |
 
 ## Installation
+
+You need Python 3.12+ for the pinned environment, and a free
+[Copernicus Marine account](https://data.marine.copernicus.eu/register) for remote products.
 
 ```bash
 git clone https://github.com/Kissyfur/copernicus-matchup.git
 cd copernicus-matchup
-
 python -m venv .venv
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-# Linux / macOS
-source .venv/bin/activate
-
-python -m pip install --upgrade pip
-pip install -r requirements-dev.txt    # requirements.txt alone if you don't need pytest
+.venv\Scripts\Activate.ps1            # Windows PowerShell
+source .venv/bin/activate             # Linux / macOS
+pip install -r requirements-dev.txt   # latest tested versions (requirements.txt skips pytest)
 pip install -e .
+pytest -q                             # check that everything works
 ```
 
-Check that it works:
+On Windows, `py -3.12 -m venv .venv` picks the Python version. If PowerShell blocks
+`Activate.ps1`, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+
+### Inside another project
+
+The package installs on Python 3.9+ and adapts to the project's environment.
+`pyproject.toml` only sets minimum versions, all of them tested, so pip keeps any library you
+already have that meets them.
 
 ```bash
-pytest -q
-copernicus-matchup --help
+pip install "copernicus-matchup[download] @ git+https://github.com/Kissyfur/copernicus-matchup.git@v0.6.0"
 ```
 
-Windows notes:
-- With several Pythons installed, `py -3.12 -m venv .venv` picks the version.
-- If PowerShell refuses to run `Activate.ps1`, allow local scripts once with
-  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Alternatively, skip activation and call
-  `.venv\Scripts\python.exe` and `.venv\Scripts\copernicus-matchup.exe` directly.
+- **Minimum versions:** numpy 1.22.4, pandas 2.1, xarray 2023.11, scipy 1.10, netCDF4 1.6 and
+  PyYAML 6.0.
+- **Extras:** `download` (Copernicus Marine client, for remote products), `excel` (`.xlsx`/`.xls`
+  tables) and `dev` (pytest).
+- Add `--dry-run` to the install command to see what pip would change.
 
-`requirements.txt` pins every direct dependency to its latest tested release, including both
-optional extras (the Copernicus Marine client and Excel support).
+**TensorFlow 2.10 (GPU on native Windows).** Add these lines to the project's requirements:
 
-### As a dependency of another project
-
-```bash
-pip install "copernicus-matchup[download] @ git+https://github.com/Kissyfur/copernicus-matchup.git@v0.5.0"
+```text
+tensorflow==2.10.1
+numpy<2          # TensorFlow 2.10 needs numpy 1.x but doesn't declare it
+setuptools<82    # TensorBoard 2.10 needs pkg_resources; the Copernicus client upgrades setuptools
+copernicus-matchup[download] @ git+https://github.com/Kissyfur/copernicus-matchup.git@v0.6.0
 ```
 
-This route resolves against the version floors in `pyproject.toml`, not the pins. The extras
-are:
-
-| Extra | What it adds |
-|---|---|
-| `download` | `copernicusmarine`, needed for remote products |
-| `excel` | `openpyxl` and `xlrd`, for `.xlsx` and `.xls` observation tables |
-| `dev` | `pytest` |
+This setup is tested with Python 3.9 on an NVIDIA GPU, with TensorFlow and the cubes in one
+process. On Python < 3.10, the Copernicus client also downgrades urllib3 to 1.26, which doesn't
+affect TensorFlow.
 
 ## Usage
 
@@ -86,32 +75,29 @@ are:
 copernicusmarine login
 ```
 
-This stores your credentials under `~/.copernicusmarine`. Setting
-`COPERNICUSMARINE_SERVICE_USERNAME` and `COPERNICUSMARINE_SERVICE_PASSWORD` works too.
+### 2. Prepare the observations
 
-### 2. Prepare the observation table
-
-Use a CSV, `.xlsx` or `.xls` file with one row per observation:
+Use a CSV, `.xlsx` or `.xls` table with one row per observation:
 
 | Id | lat | lon | time | concentration |
 |---|---|---|---|---|
 | 1 | 41.38 | 2.19 | 2021-03-14 | 1250.0 |
 | 2 | 41°22'48"N | 2°11'24"E | 2021-03-15 | 0.0 |
 
-- Column names are configurable. An `Id` column is generated if there is none.
-- Coordinates may be decimal degrees or degree-minute-second text.
-- Rows missing a coordinate, the time or the target are dropped.
+- Column names are configurable, and `Id` is generated if missing.
+- Coordinates may be decimal or degree-minute-second text.
+- Incomplete rows are dropped.
 
-### 3. Write a data config
+### 3. Write a config
 
-The `data.yaml` below pairs a gappy L3 ocean-colour product, which supplies the cloud mask,
-with a gap-free L4 nutrient model, which supplies the land mask. It then resamples the coarser
-nutrient grid onto the ocean-colour one:
+This `data.yaml` pairs a gappy L3 ocean-colour product, which supplies the cloud mask, with a
+gap-free L4 nutrient model, which supplies the land mask. The nutrients are then resampled onto
+the finer ocean-colour grid:
 
 ```yaml
 target:
   path: observations.csv
-  target_column: concentration        # a list gives several outputs, kept in that order
+  target_column: concentration        # a list gives several outputs
 
 products:
   - name: reflectance
@@ -120,7 +106,6 @@ products:
     feature_group: optics
     preprocess:
       log: true
-      add_cloud_land_masks: true
       mask_kinds: [cloud_mask]
       interpolate_dims: [lat, lon, time]
 
@@ -129,94 +114,71 @@ products:
     variables: [nh4, no3, po4]
     feature_group: nut
     open_dataset_kwargs: {minimum_depth: 0, maximum_depth: 2}   # surface only
+    matchup: {lat_window: 0.12, lon_window: 0.12}   # coarse grid: cover the optics window
     preprocess:
       log: false
       log1p: true
-      add_cloud_land_masks: true
       mask_kinds: [land_mask]
       interpolate_dims: [lat, lon, time]
 
 matchup:
-  lat_window: 0.06              # half-width of the window, degrees
+  lat_window: 0.06              # half-width, degrees
   lon_window: 0.06
-  time_window_days: 14          # half-width of the window, days
-  time_threshold_days: 1
+  time_window_days: 14          # half-width, days
 
 preprocess:                     # defaults for every product
   time_limit: 15
-  time_selection: centered      # first | last | past_to_center | centered
-  fillna: 0.0
+  time_selection: centered
 
 regrid:
   enabled: true
   reference_group: optics       # other groups are resampled onto this grid
-  method: linear
 ```
 
-To use a NetCDF file you already have instead of a remote product, give the product
-`source: local` and `source_path: path/to/file.nc`. Relative paths in the config are resolved
-against the directory you run from, not the config file's directory. The sections may also be
-wrapped in a `data:` block, so a project with its own modelling sections can keep a single file.
-JSON works as well as YAML.
+- **Local files:** for a NetCDF file you already have, use `source: local` and
+  `source_path: file.nc` instead of `dataset_ids`.
+- **Relative paths** are resolved from the directory you run in.
+- **Format:** the sections may sit under a `data:` key, to share a file with other settings.
+  JSON works too.
 
-### 4. Run it
-
-From the command line:
+### 4. Run
 
 ```bash
 copernicus-matchup --config data.yaml --run-root outputs/my_run --target-transform log --target-floor-quantile 0.01
 ```
 
-The command prints a JSON summary of the files it wrote. `--stage` runs a single stage and can
-be repeated. That is how you re-run the matchup without downloading again:
+- `--target-floor-quantile` raises the target values below that quantile of the positive values
+  up to it, so zeros survive the log.
+- `--stage download|matchup|preprocess` runs single stages and can be repeated, for example to
+  re-run the matchup without downloading again.
+- `--overwrite` redoes outputs that already exist.
+- `copernicus-matchup --help` lists every option.
 
-```bash
-copernicus-matchup --config data.yaml --run-root outputs/my_run --stage download
-copernicus-matchup --config data.yaml --run-root outputs/my_run --stage matchup --stage preprocess
-```
-
-| Option | Meaning |
-|---|---|
-| `--config` | Data config, YAML or JSON (required) |
-| `--run-root` | Output directory (required) |
-| `--stage` | `download`, `matchup` or `preprocess`; repeatable; default is all three |
-| `--overwrite` | Redo `download` and `matchup` outputs that already exist (`preprocess` always rebuilds) |
-| `--target-transform` | `none` (default), `log` or `log1p` |
-| `--target-offset` | Added to the target before the transform |
-| `--target-floor-quantile` | Raise targets up to this quantile of the positive values first; required for `log` when the target has zeros |
-| `--quiet` | Only report warnings and errors |
-
-From Python, the equivalent is:
+The same from Python:
 
 ```python
 from copernicus_matchup import TargetTransform, build_dataset, load_data_config
 
-config = load_data_config("data.yaml")
 artifacts = build_dataset(
-    config,
+    load_data_config("data.yaml"),
     run_root="outputs/my_run",
     target_transform=TargetTransform(transform="log", floor={"method": "positive_quantile", "q": 0.01}),
 )
-# {'target': Path(...), 'meta': Path(...), 'optics': Path(...), 'nut': Path(...)}
 ```
 
 `build_dataset` runs `download_products`, `create_matchups` and `preprocess_matchups` in order.
-Each of the three can also be called on its own with the same `(config, run_root)` arguments.
+Each can also be called on its own.
 
 ### 5. Read the results
 
 ```
 outputs/my_run/
-├── raw/                          # local products saved whole, <name>.remote.json for remote ones
-├── processed/
-│   ├── targets.csv               # standardised observation table
-│   └── matchups/
-│       ├── <product>.nc          # one window per matched observation
-│       └── <product>_unmatched.csv
+├── raw/                    # local products, markers for remote ones
+├── processed/              # targets.csv, per-product windows, unmatched observations
 └── datasets/
-    ├── target.nc                 # (Id, variable)
-    ├── meta.nc                   # (Id, variable): lat, lon, x_day, y_day, day, metadata_columns
-    └── <feature_group>.nc        # (Id, lat, lon, time, variable)
+    ├── target.nc           # (Id, variable)
+    ├── meta.nc             # (Id, variable): lat, lon, day of year, metadata_columns
+    └── <feature_group>.nc  # (Id, lat, lon, time, variable)
 ```
 
 ```python
@@ -225,20 +187,15 @@ import xarray as xr
 
 optics = xr.load_dataarray("outputs/my_run/datasets/optics.nc")
 target = xr.load_dataarray("outputs/my_run/datasets/target.nc")
-ids = np.intersect1d(optics["Id"], target["Id"])     # observations every product matched
+ids = np.intersect1d(optics["Id"], target["Id"])   # target.nc also keeps unmatched observations
 X, y = optics.sel(Id=ids), target.sel(Id=ids)
 ```
 
-- `Id` indexes the observations and is the join key across files. `target.nc` holds every
-  observation, while each cube holds only those its products matched.
-- `variable` names the channels, in the order the products and variables were declared. Mask
-  channels come after the data channels.
-- `lat`, `lon` and `time` in the cubes are relative indices, not coordinates. The real
-  coordinates are used for regridding and then dropped.
-- A single target is stored as variable `target`. A list of targets keeps the column names.
-- The target's quantile floor, when used, is recorded in the array's `attrs`.
-- Files are always written as NETCDF4 (HDF5-based), never NetCDF3, so they read back the same in
-  every environment.
+- `Id` is the join key across files.
+- `variable` lists the channels in the order they were declared, with masks last.
+- `lat`, `lon` and `time` are relative indices, not coordinates.
+- A single target is named `target`. A list of targets keeps its column names.
+- The files are NetCDF4, so environments on older numpy and xarray can read them too.
 
 ## Configuration reference
 
@@ -246,111 +203,91 @@ X, y = optics.sel(Id=ids), target.sel(Id=ids)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `path` | required | Observation table: `.csv`, `.xlsx` or `.xls` |
-| `target_column` | required | Column to predict, or a list of columns |
-| `id_column`, `lat_column`, `lon_column`, `time_column` | `Id`, `lat`, `lon`, `time` | Column names in your table |
+| `path`, `target_column` | required | Table file; the column to predict, or a list of columns |
+| `id_column`, `lat_column`, `lon_column`, `time_column` | `Id`, `lat`, `lon`, `time` | Column names in the table |
 | `sheet_name` | first sheet | Excel sheet name or index |
-| `filter_column`, `filter_values` | — | Keep only rows whose `filter_column` value is listed |
+| `filter_column`, `filter_values` | — | Keep only rows whose value is listed |
 | `metadata_columns` | `[]` | Extra columns copied into `meta.nc` |
-| `include_spatial_metadata` | `true` | Add `lat`, `lon` to `meta.nc` |
-| `include_day_metadata` | `true` | Add day of year |
-| `include_cyclic_day_metadata` | `true` | Add the day of year as a point on a circle (`x_day`, `y_day`) |
+| `include_spatial_metadata`, `include_day_metadata`, `include_cyclic_day_metadata` | `true` | Add lat/lon, day of year, and its cosine and sine (`x_day`, `y_day`) to `meta.nc` |
 
 **`products`** (a list)
 
 | Key | Default | Meaning |
 |---|---|---|
 | `name` | required | Used in file names, and as the feature group if none is given |
-| `dataset_ids` | required for remote | Copernicus dataset IDs, tried in order until one opens |
-| `variables` | all | Variables to keep, in channel order |
-| `feature_group` | `name` | Products sharing a group are stacked into one cube |
+| `dataset_ids` | — | Copernicus dataset IDs, tried in order until one opens |
 | `source`, `source_path` | `copernicus` | `source: local` reads `source_path` instead |
-| `open_dataset_kwargs` | `{}` | Passed to `copernicusmarine.open_dataset`, e.g. `minimum_depth`, `start_datetime` or a bounding box |
-| `rename_dimensions` | `latitude→lat`, `longitude→lon` | Maps the product's dimension names onto `lat`/`lon`/`time` |
-| `rename_variables` | `{}` | Renames variables |
-| `matchup` | `{}` | Per-product overrides of the `matchup` section |
-| `preprocess` | `{}` | Per-product options, see below |
+| `variables` | all | Variables to keep, in channel order |
+| `feature_group` | `name` | Products in the same group share a cube |
+| `open_dataset_kwargs` | `{}` | Passed to `copernicusmarine.open_dataset` (depth, dates, bounding box) |
+| `rename_dimensions`, `rename_variables` | `latitude→lat`, `longitude→lon` | Map the product's names onto `lat`/`lon`/`time` |
+| `matchup`, `preprocess` | `{}` | Per-product overrides of those sections |
 
 **`matchup`**
 
 | Key | Default | Meaning |
 |---|---|---|
-| `lat_window`, `lon_window` | `0.06` | Half-width of the window around the nearest grid cell, degrees |
-| `time_window_days` | `1` | Half-width of the window, days |
-| `lat_threshold`, `lon_threshold` | `0.1` | An observation is unmatched if the nearest grid cell is at least this far away, degrees |
-| `time_threshold_days` | `1` | The same, for the nearest time step, in days |
-| `require_full_time_window` | `false` | Drop windows with fewer than `2 × time_window_days + 1` time steps |
+| `lat_window`, `lon_window` | `0.06` | Window half-width around the nearest grid cell, in degrees |
+| `time_window_days` | `1` | Window half-width, in days |
+| `lat_threshold`, `lon_threshold` | `0.1` | Unmatched if the nearest grid cell is at least this far away, in degrees |
+| `time_threshold_days` | `1` | Unmatched if the nearest time step is at least this far away, in days |
+| `require_full_time_window` | `false` | Drop windows with missing time steps |
 
-Windows clipped by the edge of a product's domain are recorded as unmatched too.
+Observations at the edge of a product's domain get clipped windows, and are recorded as
+unmatched.
 
-**`preprocess`**: the top-level section sets defaults for every product, and
-`products[].preprocess` overrides them. Keys marked *product* are read only at product level.
+**`preprocess`**: the top-level section sets defaults and `products[].preprocess` overrides
+them. Keys marked *product* only work at product level.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `log` | `true` | Natural log of the data channels (named `log_products` in the top-level section) |
-| `log1p` *product* | `false` | `log(1 + x)`, for fields that contain zeros |
-| `exclude_from_log`, `exclude_from_log1p` *product* | `[]` | Channels to leave untransformed |
+| `log` | `true` | Natural log of the data channels (`log_products` at top level) |
+| `log1p` *product* | `false` | `log(1 + x)`, for fields with zeros |
+| `exclude_from_log`, `exclude_from_log1p` *product* | `[]` | Channels left untransformed |
 | `positive_quantile` | `0.01` | Raise values below this quantile of the positive values up to it; `null` disables it |
 | `interpolate_dims` *product* | `[]` | Fill gaps by linear interpolation along these dimensions |
 | `add_cloud_land_masks` | `true` | Append mask channels derived from missing values |
 | `mask_kinds` *product* | both | `[cloud_mask]` for an L3 product, `[land_mask]` for a gap-free L4 product |
 | `add_photoperiod` *product* | `false` | Append a daylight-hours channel |
-| `derived_variables` *product* | `[]` | `{name, expression}` channels built from the product's variables with `+ - * / **` |
+| `derived_variables` *product* | `[]` | `{name, expression}` channels computed with `+ - * / **` |
 | `anomaly_variables` *product* | `[]` | Append `<name>_anom`, the anomaly against the monthly climatology |
 | `time_limit` | all | Number of time steps to keep |
-| `time_selection` | `first` | Which steps to keep: `first`, `last`, `past_to_center` or `centered` |
-| `min_valid_ratio` | — | Drop observations whose window has a smaller share of cloud-free water than this (needs a cloud mask) |
-| `fillna` | `0.0` | Value for the gaps that remain; `null` keeps NaN |
+| `time_selection` | `first` | Which steps: `first`, `last`, `past_to_center` or `centered` |
+| `min_valid_ratio` | — | Drop observations with a smaller share of cloud-free water (needs a cloud mask) |
+| `fillna` | `0.0` | Value for the remaining gaps; `null` keeps NaN |
 | `prefix_variables` | `false` | Name channels `<product>:<variable>` |
 
-The defaults suit positive concentrations such as reflectance, chlorophyll or nutrients. For a
-field that can be negative or shouldn't be logged, such as temperature or currents, set
-`log: false` and `positive_quantile: null` on that product.
+The defaults suit positive concentrations. For temperature, currents or any field that can be
+negative, set `log: false` and `positive_quantile: null` on that product.
 
 **`regrid`**
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enabled` | `false` | Resample every feature group onto the reference group's lat/lon grid |
+| `enabled` | `false` | Resample every feature group onto the reference group's grid |
 | `reference_group` | — | Usually the finest-resolution group |
 | `method` | `linear` | `linear` or `nearest` |
 
+Regridding can't extrapolate. Give coarser products a wider `matchup` window than the reference
+group, as in the example. Otherwise, the cells outside their coverage stay NaN.
+
 ## Transformation order
 
-The steps run per product, in this order, because several of them do not commute:
+Each product goes through these steps in order, because several of them do not commute:
 
-1. **Cloud and land masks**: derived from missing values, so they must see the untouched array
-2. **Positive-quantile floor**: computed on observed values only, before gap filling
-3. **Gap filling** along `interpolate_dims`
-4. **Derived channels**, then **monthly anomalies**
-5. **Log / log1p**
-6. **Mask and photoperiod channels** appended after the data channels
-7. **Temporal selection** (`time_limit`, `time_selection`)
-8. **Coverage filter** (`min_valid_ratio`). Cloud cover often correlates with the quantity being
-   studied, so a strict threshold can bias the sample that remains.
-9. **Residual imputation** (`fillna`). This runs after the log, so an imputed value is zero in log
-   space and should be read together with the mask channels.
+1. Cloud and land masks, computed on the untouched data
+2. Positive-quantile floor, on observed values only
+3. Gap filling
+4. Derived channels, then anomalies
+5. Log / log1p
+6. Mask and photoperiod channels appended
+7. Time selection
+8. Coverage filter (`min_valid_ratio`). Cloud cover often correlates with the quantity being
+   measured, so a strict threshold can bias the sample.
+9. `fillna`. This runs after the log, so filled values are 0 in log space. Read them together
+   with the mask channels.
 
-## Dependency policy
-
-`pyproject.toml` declares version floors only, never ceilings. Output crosses the boundary as
-NetCDF and CSV, never as pickles or `.npy`, so the writer's library versions don't enter the
-files. Artifacts written under numpy 2.0.2, pandas 2.3.3 and xarray 2024.7 read back bit-exactly
-under numpy 1.24.4, pandas 2.1.4 and xarray 2023.11.
-
-A consumer held at an older numpy, such as TensorFlow 2.10 at `numpy<2`, can therefore read
-cubes produced here on the latest stack, as long as the two live in separate environments.
-`requirements.txt` is the other half: the exact, latest set this package was tested with.
-
-## Tests
-
-```bash
-pip install -r requirements-dev.txt
-pytest -q
-```
-
-## Status
+---
 
 Extracted from a *Pseudo-nitzschia* retrieval project, where it builds the environmental cubes.
-The Python API and the CLI are both stable.
+The Python API and the CLI are stable.
