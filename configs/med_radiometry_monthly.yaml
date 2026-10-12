@@ -1,0 +1,33 @@
+# Monthly mean remote-sensing reflectance for two Mediterranean regions, from the start of the
+# record (September 1997) to the latest day available.
+#
+#   copernicusmarine login                                      # once
+#   python scripts/download_monthly_means.py configs/med_radiometry_monthly.yaml --dry-run
+#   python scripts/download_monthly_means.py configs/med_radiometry_monthly.yaml
+#
+# Writes <output_dir>/<region>_monthly.nc with one mean per month of every year. Copernicus
+# only publishes this record as daily images, so the script downloads the daily data and
+# averages it: about 7 GB of transfer for the northern Adriatic and 26 GB for the NW
+# Mediterranean. An interrupted run resumes where it stopped.
+
+# Multi-sensor L3 ocean colour, 1 km, daily: SeaWiFS in 1997, MODIS, VIIRS and OLCI today
+dataset_id: cmems_obs-oc_med_bgc-reflectance_my_l3-multi-1km_P1D
+variables: [RRS412, RRS443, RRS490, RRS510, RRS555, RRS670]   # sr-1
+
+# Applied to the monthly means of each band, over all its months and pixels, in this order
+positive_quantile: 0.05   # raise values below the 5% quantile of the positive means up to it
+log: true                 # then take the natural log
+
+start: 1997-09-16      # first day of the record
+end: null              # null: up to the latest day available
+
+output_dir: outputs/radiometry_monthly
+keep_daily: false      # true also keeps the daily data (~6 GB and ~22 GB uncompressed)
+
+regions:
+  north_adriatic:      # Venice lagoon to Istria, with the Gulf of Trieste (Trieste, Piran)
+    lat: [44.50, 45.85]
+    lon: [12.20, 14.50]
+  nw_mediterranean:    # Catalan coast and Gulf of Lion (Blanes Bay, Banyuls-sur-Mer)
+    lat: [40.50, 43.50]
+    lon: [1.50, 5.50]

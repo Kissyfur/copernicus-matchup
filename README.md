@@ -197,6 +197,23 @@ X, y = optics.sel(Id=ids), target.sel(Id=ids)
 - A single target is named `target`. A list of targets keeps its column names.
 - The files are NetCDF4, so environments on older numpy and xarray can read them too.
 
+## Monthly regional means
+
+[scripts/download_monthly_means.py](scripts/download_monthly_means.py) is a standalone tool,
+separate from the matchup. It downloads a daily product over boxes and averages it by month.
+[configs/med_radiometry_monthly.yaml](configs/med_radiometry_monthly.yaml) fetches the 1 km
+reflectance from 1997 to today for the northern Adriatic and the NW Mediterranean. It then
+floors the monthly means at their 5% quantile and takes the log, like the `positive_quantile`
+and `log` options above:
+
+```bash
+python scripts/download_monthly_means.py configs/med_radiometry_monthly.yaml --dry-run   # sizes only
+python scripts/download_monthly_means.py configs/med_radiometry_monthly.yaml
+```
+
+The download goes in blocks aligned with the server's storage, so an interrupted run resumes
+where it stopped.
+
 ## Configuration reference
 
 **`target`**
