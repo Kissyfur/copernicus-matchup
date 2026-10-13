@@ -482,6 +482,31 @@ def test_load_target_table_without_filter_keeps_all_rows(tmp_path):
     assert sorted(data["Id"]) == ["a", "b"]
 
 
+def test_load_target_table_can_keep_rows_without_a_target(tmp_path):
+    """A prediction table lists places and dates with an empty target column."""
+    path = tmp_path / "stations.csv"
+    path.write_text(
+        "Id,lat,lon,time,target\n"
+        "BBMO_20200101,41.665,2.805,2020-01-01,\n"
+        "BBMO_20200102,41.665,2.805,2020-01-02,\n"
+        "BBMO_20200103,,2.805,2020-01-03,\n",
+        encoding="utf-8",
+    )
+
+    # by default a row without a target is dropped, as for training
+    assert load_target_table(TargetConfig(path=str(path), target_column="target")).empty
+
+    kept = load_target_table(
+        TargetConfig(path=str(path), target_column="target", keep_missing_targets=True)
+    )
+    # coordinates and time are still required
+    assert list(kept["Id"]) == ["BBMO_20200101", "BBMO_20200102"]
+    assert kept["target"].isna().all()
+    assert TargetConfig.from_dict(
+        {"path": "t.csv", "target_column": "y", "keep_missing_targets": True}
+    ).keep_missing_targets
+
+
 def test_load_target_table_reads_the_first_excel_sheet_by_default(tmp_path):
     """Regression: with no sheet_name, pandas returned every sheet as a dict and the load
     failed with "'dict' object has no attribute 'columns'"."""

@@ -45,7 +45,7 @@ The package installs on Python 3.9+ and adapts to the project's environment.
 already have that meets them.
 
 ```bash
-pip install "copernicus-matchup[download] @ git+https://github.com/Kissyfur/copernicus-matchup.git@v0.6.0"
+pip install "copernicus-matchup[download] @ git+https://github.com/Kissyfur/copernicus-matchup.git@v0.7.0"
 ```
 
 - **Minimum versions:** numpy 1.22.4, pandas 2.1, xarray 2023.11, scipy 1.10, netCDF4 1.6 and
@@ -60,7 +60,7 @@ pip install "copernicus-matchup[download] @ git+https://github.com/Kissyfur/cope
 tensorflow==2.10.1
 numpy<2          # TensorFlow 2.10 needs numpy 1.x but doesn't declare it
 setuptools<82    # TensorBoard 2.10 needs pkg_resources; the Copernicus client upgrades setuptools
-copernicus-matchup[download] @ git+https://github.com/Kissyfur/copernicus-matchup.git@v0.6.0
+copernicus-matchup[download] @ git+https://github.com/Kissyfur/copernicus-matchup.git@v0.7.0
 ```
 
 This setup is tested with Python 3.9 on an NVIDIA GPU, with TensorFlow and the cubes in one
@@ -197,23 +197,6 @@ X, y = optics.sel(Id=ids), target.sel(Id=ids)
 - A single target is named `target`. A list of targets keeps its column names.
 - The files are NetCDF4, so environments on older numpy and xarray can read them too.
 
-## Monthly regional means
-
-[scripts/download_monthly_means.py](scripts/download_monthly_means.py) is a standalone tool,
-separate from the matchup. It downloads a daily product over boxes and averages it by month.
-[configs/med_radiometry_monthly.yaml](configs/med_radiometry_monthly.yaml) fetches the 1 km
-reflectance from 1997 to today for the northern Adriatic and the NW Mediterranean. It then
-floors the monthly means at their 5% quantile and takes the log, like the `positive_quantile`
-and `log` options above:
-
-```bash
-python scripts/download_monthly_means.py configs/med_radiometry_monthly.yaml --dry-run   # sizes only
-python scripts/download_monthly_means.py configs/med_radiometry_monthly.yaml
-```
-
-The download goes in blocks aligned with the server's storage, so an interrupted run resumes
-where it stopped.
-
 ## Configuration reference
 
 **`target`**
@@ -224,6 +207,7 @@ where it stopped.
 | `id_column`, `lat_column`, `lon_column`, `time_column` | `Id`, `lat`, `lon`, `time` | Column names in the table |
 | `sheet_name` | first sheet | Excel sheet name or index |
 | `filter_column`, `filter_values` | — | Keep only rows whose value is listed |
+| `keep_missing_targets` | `false` | Keep rows with an empty target, to build cubes for prediction |
 | `metadata_columns` | `[]` | Extra columns copied into `meta.nc` |
 | `include_spatial_metadata`, `include_day_metadata`, `include_cyclic_day_metadata` | `true` | Add lat/lon, day of year, and its cosine and sine (`x_day`, `y_day`) to `meta.nc` |
 

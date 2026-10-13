@@ -66,6 +66,9 @@ class TargetConfig:
     include_cyclic_day_metadata: bool = True
     filter_column: str | None = None
     filter_values: list[str] = field(default_factory=list)
+    # Keep rows whose target is missing instead of dropping them: a table of places and
+    # dates to build cubes for, so a trained model can predict what was never measured.
+    keep_missing_targets: bool = False
 
     @property
     def is_multi_output(self) -> bool:
@@ -109,6 +112,7 @@ class TargetConfig:
             include_cyclic_day_metadata=bool(data.get("include_cyclic_day_metadata", True)),
             filter_column=data.get("filter_column"),
             filter_values=[str(v) for v in data.get("filter_values", [])],
+            keep_missing_targets=bool(data.get("keep_missing_targets", False)),
         )
 
 

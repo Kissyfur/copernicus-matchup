@@ -66,7 +66,11 @@ def load_target_table(config: TargetConfig) -> pd.DataFrame:
     data[TIME] = pd.to_datetime(data[TIME])
     # A row missing any one output is dropped: the outputs share a feature cube, so a row
     # cannot be kept for some heads and dropped for others without splitting the dataset.
-    data = data.dropna(subset=[ID, LAT, LON, TIME, *target_names]).copy()
+    # A prediction table opts out, since none of its rows has a target to begin with.
+    required_values = [ID, LAT, LON, TIME]
+    if not config.keep_missing_targets:
+        required_values += target_names
+    data = data.dropna(subset=required_values).copy()
     return data
 
 
