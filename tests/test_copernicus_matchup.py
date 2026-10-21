@@ -384,6 +384,38 @@ def test_regrid_still_interpolates_an_axis_that_has_real_structure():
         )
 
 
+def test_nearest_regrid_replicates_blocks_and_leaves_no_gap():
+    """A coarse grid whose cell centres stop short of the finer window on one side, as a
+    4.2 km model's do against a 1 km window: nearest must still fill every target cell,
+    each with the value of the source cell whose centre is nearest, and keep a 0/1 mask
+    0/1 -- block replication, not interpolation."""
+    coarse_lat, coarse_lon = np.array([41.958, 42.0, 42.042]), np.array([2.958, 3.0, 3.042])
+    fine_lat = np.round(np.arange(41.95, 42.071, 0.0104), 4)
+    fine_lon = np.round(np.arange(2.95, 3.061, 0.0104), 4)
+
+    def cube(lat, lon, values):
+        return xr.DataArray(
+            values.reshape(1, len(lat), len(lon), 1, values.shape[-1]),
+            dims=("Id", "lat", "lon", "time", "variable"),
+            coords={"Id": [1], "lat": (("Id", "lat"), lat[None]), "lon": (("Id", "lon"), lon[None]),
+                    "time": [0], "variable": ["value", "land_mask"][: values.shape[-1]]},
+        )
+
+    values = np.stack([np.arange(9.0).reshape(3, 3), np.array([[0, 0, 1], [0, 1, 1], [0, 0, 1.0]])], axis=-1)
+    source = cube(coarse_lat, coarse_lon, values)
+    reference = cube(fine_lat, fine_lon, np.zeros((len(fine_lat), len(fine_lon), 1)))
+
+    out = resample_group_to_reference(source, reference, method="nearest")
+
+    assert out.sizes["lat"] == len(fine_lat) and out.sizes["lon"] == len(fine_lon)
+    assert not np.isnan(out.values).any()
+    nearest_lat = np.abs(fine_lat[:, None] - coarse_lat[None]).argmin(axis=1)
+    nearest_lon = np.abs(fine_lon[:, None] - coarse_lon[None]).argmin(axis=1)
+    expected = values[nearest_lat][:, nearest_lon]
+    np.testing.assert_array_equal(out.values[0, :, :, 0, :], expected)
+    assert set(np.unique(out.sel(variable="land_mask").values)) <= {0.0, 1.0}
+
+
 def test_matchups_drop_windows_clipped_by_the_product_domain():
     """An observation outside the product's domain snaps to an edge cell and gets a
     smaller window, which xarray cannot concatenate with the rest -- it used to raise

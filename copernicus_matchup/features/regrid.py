@@ -59,6 +59,14 @@ def resample_group_to_reference(
                 interp_axes[dim] = target
             else:
                 broadcast_axes[dim] = target
+        # Nearest is block replication: each target cell copies the source cell whose centre
+        # is nearest -- the cell it lies in -- so a 0/1 mask stays 0/1. reindex rather than
+        # interp, because interp stops at the outermost source centre and returns NaN past
+        # it, which for a coarse product left a band of every finer window empty; reindex
+        # gives those cells the outermost cell's value instead.
+        if method == "nearest":
+            broadcast_axes.update(interp_axes)
+            interp_axes = {}
 
         interpolated = source_sample
         if interp_axes:

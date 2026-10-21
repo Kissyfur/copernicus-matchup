@@ -274,7 +274,7 @@ negative, set `log: false` and `positive_quantile: null` on that product.
 |---|---|---|
 | `enabled` | `false` | Resample every feature group onto the reference group's grid |
 | `reference_group` | — | Usually the finest-resolution group |
-| `method` | `linear` | `linear` or `nearest` |
+| `method` | `linear` | `linear` interpolates between cell centres, and leaves cells past the outermost centre empty; `nearest` copies the coarse cell each fine cell lies in, leaves no gap, and keeps 0/1 masks 0/1 |
 
 Regridding can't extrapolate. Give coarser products a wider `matchup` window than the reference
 group, as in the example. Otherwise, the cells outside their coverage stay NaN.
