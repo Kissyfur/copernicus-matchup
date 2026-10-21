@@ -782,6 +782,96 @@ def test_download_and_matchup_run_from_a_config_file_for_a_local_product(tmp_pat
     assert [str(v) for v in optics["variable"].values] == ["RRS412"]
 
 
+def _local_case(root: Path, processed_path: Path | None = None):
+    """A local product, three observations it covers and one it does not, as a config."""
+    root.mkdir(parents=True, exist_ok=True)
+    lats = np.round(np.arange(40.0, 40.4, 0.05), 4)
+    lons = np.round(np.arange(10.0, 10.4, 0.05), 4)
+    times = pd.date_range("2020-01-01", periods=5)
+    xr.Dataset(
+        {"RRS412": (("time", "latitude", "longitude"),
+                    np.random.default_rng(0).random((len(times), len(lats), len(lons))) + 0.1)},
+        coords={"time": times, "latitude": lats, "longitude": lons},
+    ).to_netcdf(root / "product.nc")
+    pd.DataFrame(
+        {
+            "Id": [1, 2, 3, 4],
+            "lat": [40.1, 40.15, 40.2, 0.0],
+            "lon": [10.1, 10.15, 10.2, 0.0],
+            "time": [times[2]] * 4,
+            "y": [0.002, 0.004, 0.008, 0.016],
+            "note": ["a", "b", "c", "d"],
+        }
+    ).to_csv(root / "obs.csv", index=False)
+    kept = "" if processed_path is None else f"  processed_path: {processed_path.as_posix()}\n"
+    (root / "data.yaml").write_text(
+        f"target:\n"
+        f"  path: {(root / 'obs.csv').as_posix()}\n"
+        f"  target_column: y\n"
+        f"{kept}"
+        f"products:\n"
+        f"  - name: reflectance\n"
+        f"    source: local\n"
+        f"    source_path: {(root / 'product.nc').as_posix()}\n"
+        f"    dataset_ids: []\n"
+        f"    variables: [RRS412]\n"
+        f"    feature_group: optics\n"
+        f"    preprocess:\n"
+        f"      interpolate_dims: [lat, lon, time]\n"
+        f"matchup:\n"
+        f"  time_window_days: 1\n"
+        f"preprocess:\n"
+        f"  time_limit: 2\n"
+        f"  add_cloud_land_masks: false\n"
+        f"  fillna: 0.0\n",
+        encoding="utf-8",
+    )
+    from copernicus_matchup import load_data_config
+
+    return load_data_config(root / "data.yaml")
+
+
+def test_a_processed_path_keeps_the_observations_once_and_out_of_the_run(tmp_path):
+    from copernicus_matchup import TargetTransform, build_dataset, load_target
+
+    kept = tmp_path / "data" / "processed" / "obs.csv"
+    config = _local_case(tmp_path / "shared", processed_path=kept)
+    log = TargetTransform(transform="log")
+    artifacts = build_dataset(config, tmp_path / "run", target_transform=log)
+
+    layout = RunLayout(tmp_path / "run")
+    assert kept.exists()
+    assert not layout.targets.exists()
+    assert not (layout.datasets / "target.nc").exists()
+    assert set(artifacts) == {"meta", "optics"}
+    # The one observation no window covers is named by its Id and nothing else.
+    unmatched = pd.read_csv(layout.product_unmatched("reflectance"))
+    assert list(unmatched.columns) == ["Id"] and unmatched["Id"].tolist() == [4]
+
+    # Rebuilt by Id, the target is the one the earlier layout wrote into every run.
+    legacy_config = _local_case(tmp_path / "legacy")
+    build_dataset(legacy_config, tmp_path / "legacy_run", target_transform=log)
+    written = xr.load_dataarray(tmp_path / "legacy_run" / "datasets" / "target.nc")
+    xr.testing.assert_allclose(load_target(config, tmp_path / "run", log), written)
+    xr.testing.assert_allclose(load_target(legacy_config, tmp_path / "legacy_run"), written)
+
+
+def test_a_processed_path_drops_the_copies_an_earlier_layout_left_in_the_run(tmp_path):
+    from copernicus_matchup import build_dataset, preprocess_matchups
+
+    legacy = _local_case(tmp_path / "case")
+    build_dataset(legacy, tmp_path / "run")
+    layout = RunLayout(tmp_path / "run")
+    assert layout.targets.exists() and (layout.datasets / "target.nc").exists()
+
+    legacy.target.processed_path = str(tmp_path / "data" / "processed" / "obs.csv")
+    preprocess_matchups(legacy, tmp_path / "run")
+    assert not layout.targets.exists()
+    assert not (layout.datasets / "target.nc").exists()
+    # built once, from the original file, since the run's matchups were already there
+    assert Path(legacy.target.processed_path).exists()
+
+
 def test_cli_builds_cubes_from_a_config_path(tmp_path, capsys):
     """The CLI is the whole package from a shell: config file in, cubes out.
 

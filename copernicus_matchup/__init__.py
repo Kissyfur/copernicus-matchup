@@ -20,7 +20,12 @@ from copernicus_matchup.config import (
     load_data_config,
 )
 from copernicus_matchup.layout import RunLayout
-from copernicus_matchup.preprocessing import TargetTransform, preprocess_matchups
+from copernicus_matchup.preprocessing import (
+    TargetTransform,
+    load_target,
+    preprocess_matchups,
+    transformed_target,
+)
 from copernicus_matchup.stages import build_dataset, create_matchups, download_products
 
 __all__ = [
@@ -36,7 +41,9 @@ __all__ = [
     "create_matchups",
     "download_products",
     "load_data_config",
+    "load_target",
     "preprocess_matchups",
+    "transformed_target",
     "__version__",
 ]
 

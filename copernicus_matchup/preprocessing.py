@@ -13,9 +13,14 @@ import pandas as pd
 import xarray as xr
 
 from copernicus_matchup._io import write_netcdf
-from copernicus_matchup.config import DataConfig, ProductSpec, RegridConfig
+from copernicus_matchup.config import DataConfig, ProductSpec, RegridConfig, TargetConfig
 from copernicus_matchup.layout import RunLayout
-from copernicus_matchup.targets import load_target_table, metadata_to_dataarray, target_to_dataarray
+from copernicus_matchup.targets import (
+    drop_run_copies,
+    metadata_to_dataarray,
+    standard_targets,
+    target_to_dataarray,
+)
 from copernicus_matchup.features.astronomy import photoperiod_hours
 from copernicus_matchup.features.masks import (
     get_cloud_and_land_masks,
@@ -500,6 +505,41 @@ def transform_target(
     raise ValueError(f"Unsupported target transform: {transform}")
 
 
+def transformed_target(
+    targets: pd.DataFrame,
+    config: TargetConfig,
+    target_transform: TargetTransform | None = None,
+) -> xr.DataArray:
+    """The (Id, variable) target array of a standardized table, transformed as asked."""
+    target_transform = target_transform or TargetTransform.none()
+    target_da = target_to_dataarray(targets, target_names=config.target_names)
+    return transform_target(
+        target_da,
+        target_transform.transform,
+        offset=target_transform.offset,
+        floor_config=target_transform.floor,
+    )
+
+
+def load_target(
+    config: DataConfig,
+    run_root: str | Path,
+    target_transform: TargetTransform | None = None,
+) -> xr.DataArray:
+    """The (Id, variable) target array a run's model is trained and scored against.
+
+    With `target.processed_path` set it is rebuilt from the shared standardized table by
+    `transformed_target` -- the same code preprocess_matchups uses -- so it agrees value
+    for value with the datasets/target.nc an earlier layout wrote into every run. Without
+    it, that file is still where the target lives, and it is read as before.
+    """
+    if config.target.processed_path:
+        return transformed_target(
+            standard_targets(config.target, run_root), config.target, target_transform
+        )
+    return xr.load_dataarray(RunLayout(run_root).datasets / "target.nc")
+
+
 def preprocess_matchups(
     config: DataConfig,
     run_root: str | Path,
@@ -510,24 +550,23 @@ def preprocess_matchups(
     `target_transform` is supplied by the caller (see `src/pipeline/preprocess.py`), which
     is the only layer entitled to know what the model intends to predict. Omitting it
     leaves the target untransformed.
+
+    With `target.processed_path` set the target is not written into the run at all; the
+    run keeps only the cubes and `meta`, and `load_target` rebuilds the target by Id.
     """
     layout = RunLayout(run_root)
     datasets_dir = layout.datasets
     datasets_dir.mkdir(parents=True, exist_ok=True)
 
-    target_transform = target_transform or TargetTransform.none()
-
-    target_table_path = layout.targets
-    targets = pd.read_csv(target_table_path, parse_dates=["time"]) if target_table_path.exists() else load_target_table(config.target)
-
-    target_da = target_to_dataarray(targets, target_names=config.target.target_names)
-    target_da = transform_target(
-        target_da,
-        target_transform.transform,
-        offset=target_transform.offset,
-        floor_config=target_transform.floor,
-    )
-    target_path = write_netcdf(target_da, datasets_dir / "target.nc")
+    targets = standard_targets(config.target, run_root)
+    # Built even when it is not written: a transform that cannot be applied -- log of a
+    # negative value, say -- then fails here, at preprocessing, not later at training.
+    target_da = transformed_target(targets, config.target, target_transform)
+    artifacts: dict[str, Path] = {}
+    if config.target.processed_path:
+        drop_run_copies(config.target, run_root)
+    else:
+        artifacts["target"] = write_netcdf(target_da, datasets_dir / "target.nc")
 
     meta = metadata_to_dataarray(
         targets,
@@ -536,10 +575,9 @@ def preprocess_matchups(
         include_day_metadata=config.target.include_day_metadata,
         include_cyclic_day_metadata=config.target.include_cyclic_day_metadata,
     )
-    meta_path = write_netcdf(meta, datasets_dir / "meta.nc")
+    artifacts["meta"] = write_netcdf(meta, datasets_dir / "meta.nc")
 
     grouped: dict[str, list[xr.DataArray]] = defaultdict(list)
-    artifacts: dict[str, Path] = {"target": target_path, "meta": meta_path}
 
     for product in config.products:
         matchup_path = layout.product_matchup(product.name)

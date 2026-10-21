@@ -159,7 +159,9 @@ def create_product_matchups(
 
 def save_matchups(matchups: xr.Dataset | None, unmatched: pd.DataFrame, matchup_path: Path, unmatched_path: Path) -> None:
     unmatched_path.parent.mkdir(parents=True, exist_ok=True)
-    unmatched.to_csv(unmatched_path, index=False)
+    # Ids only. Every other column would be a copy of the observation table, which is kept
+    # once (see TargetConfig.processed_path), and the Id is all it takes to find the row.
+    unmatched[[ID]].to_csv(unmatched_path, index=False)
     if matchups is not None:
         matchup_path.parent.mkdir(parents=True, exist_ok=True)
         matchups.load()

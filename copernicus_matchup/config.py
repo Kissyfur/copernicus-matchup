@@ -69,6 +69,13 @@ class TargetConfig:
     # Keep rows whose target is missing instead of dropping them: a table of places and
     # dates to build cubes for, so a trained model can predict what was never measured.
     keep_missing_targets: bool = False
+    # Where the standardized observation table is kept: once, shared by every run of this
+    # config, instead of a copy inside each run directory. With it set a run directory
+    # holds no observations and no target values -- only sample Ids and the feature cubes
+    # -- and the target is rebuilt from this table by Id when it is needed (see
+    # `load_target`). Unset keeps the earlier layout: processed/targets.csv and
+    # datasets/target.nc inside every run.
+    processed_path: str | None = None
 
     @property
     def is_multi_output(self) -> bool:
@@ -113,6 +120,9 @@ class TargetConfig:
             filter_column=data.get("filter_column"),
             filter_values=[str(v) for v in data.get("filter_values", [])],
             keep_missing_targets=bool(data.get("keep_missing_targets", False)),
+            processed_path=(
+                None if data.get("processed_path") is None else str(data["processed_path"])
+            ),
         )
 
 

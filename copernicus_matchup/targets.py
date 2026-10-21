@@ -9,6 +9,7 @@ import xarray as xr
 from copernicus_matchup.config import DEFAULT_TARGET_NAME, TargetConfig
 from copernicus_matchup.features.coordinates import dms_to_decimal
 from copernicus_matchup.features.temporal import day_to_circle_x, day_to_circle_y
+from copernicus_matchup.layout import RunLayout
 
 ID = "Id"
 LAT = "lat"
@@ -78,6 +79,44 @@ def save_standard_target_table(data: pd.DataFrame, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     data.to_csv(path, index=False)
+
+
+def standard_target_table_path(config: TargetConfig, run_root: str | Path) -> Path:
+    """Where the standardized table is kept: once, at `processed_path`, when that is set,
+    and otherwise inside the run, as in the earlier layout."""
+    if config.processed_path:
+        return Path(config.processed_path)
+    return RunLayout(run_root).targets
+
+
+def standard_targets(config: TargetConfig, run_root: str | Path) -> pd.DataFrame:
+    """The standardized table, read from where it is kept, and built there if absent.
+
+    Absent is the case for a run whose matchups were made elsewhere, or by an earlier
+    layout: the table is then built from the original file once and kept, so the next
+    reader finds it rather than building it again.
+    """
+    path = standard_target_table_path(config, run_root)
+    if path.exists():
+        return pd.read_csv(path, parse_dates=[TIME])
+    data = load_target_table(config)
+    if config.processed_path:
+        save_standard_target_table(data, path)
+    return data
+
+
+def drop_run_copies(config: TargetConfig, run_root: str | Path) -> None:
+    """Remove the observation copies an earlier layout left inside a run directory.
+
+    Only with `processed_path` set, where the table is kept once outside the run: the
+    run's own targets.csv and target.nc are then stale duplicates of it, and nothing
+    reads them any more.
+    """
+    if not config.processed_path:
+        return
+    layout = RunLayout(run_root)
+    for path in (layout.targets, layout.datasets / "target.nc"):
+        path.unlink(missing_ok=True)
 
 
 def target_to_dataarray(data: pd.DataFrame, target_names: list[str] | None = None) -> xr.DataArray:

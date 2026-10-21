@@ -174,12 +174,18 @@ Each can also be called on its own.
 ```
 outputs/my_run/
 ├── raw/                    # local products, markers for remote ones
-├── processed/              # targets.csv, per-product windows, unmatched observations
+├── processed/              # targets.csv, per-product windows, unmatched Ids
 └── datasets/
     ├── target.nc           # (Id, variable)
     ├── meta.nc             # (Id, variable): lat, lon, day of year, metadata_columns
     └── <feature_group>.nc  # (Id, lat, lon, time, variable)
 ```
+
+With `target.processed_path` set, `targets.csv` is written there instead, once for every
+run, and no run writes `target.nc`: a run directory then holds sample Ids and feature
+cubes but no observations and no target values. `load_target(config, run_root,
+target_transform)` rebuilds the target by Id, by the same code that writes `target.nc`, so
+the two layouts give identical arrays.
 
 ```python
 import numpy as np
@@ -208,6 +214,7 @@ X, y = optics.sel(Id=ids), target.sel(Id=ids)
 | `sheet_name` | first sheet | Excel sheet name or index |
 | `filter_column`, `filter_values` | — | Keep only rows whose value is listed |
 | `keep_missing_targets` | `false` | Keep rows with an empty target, to build cubes for prediction |
+| `processed_path` | — | Keep the standardized table here, once, instead of in every run; runs then hold only Ids |
 | `metadata_columns` | `[]` | Extra columns copied into `meta.nc` |
 | `include_spatial_metadata`, `include_day_metadata`, `include_cyclic_day_metadata` | `true` | Add lat/lon, day of year, and its cosine and sine (`x_day`, `y_day`) to `meta.nc` |
 

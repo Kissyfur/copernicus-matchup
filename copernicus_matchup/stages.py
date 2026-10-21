@@ -14,7 +14,12 @@ from copernicus_matchup.copernicus import (
 )
 from copernicus_matchup.layout import RunLayout
 from copernicus_matchup.matchups import create_product_matchups, save_matchups
-from copernicus_matchup.targets import load_target_table, save_standard_target_table
+from copernicus_matchup.targets import (
+    drop_run_copies,
+    load_target_table,
+    save_standard_target_table,
+    standard_target_table_path,
+)
 
 logger = logging.getLogger("copernicus_matchup.stages")
 
@@ -91,18 +96,21 @@ def create_matchups(
 ) -> dict[str, Path]:
     """Cut a target-centred window out of every product, for every observation.
 
-    Writes the standardized target table alongside, since downstream stages read the
-    observations back from it rather than re-reading the original file.
+    Writes the standardized target table too, since downstream stages read the
+    observations back from it rather than re-reading the original file: to
+    `target.processed_path`, shared by every run, when that is set, and otherwise into the
+    run, as in the earlier layout.
 
     Returns the matchup path per product name; a product that matched nothing is absent
-    from the mapping but still leaves its unmatched-rows CSV behind.
+    from the mapping but still leaves its unmatched-Ids CSV behind.
     """
     layout = RunLayout(run_root)
     layout.mkdirs("processed", "matchups")
     artifacts: dict[str, Path] = {}
 
     targets = load_target_table(config.target)
-    save_standard_target_table(targets, layout.targets)
+    save_standard_target_table(targets, standard_target_table_path(config.target, run_root))
+    drop_run_copies(config.target, run_root)
 
     for product in config.products:
         matchup_path = layout.product_matchup(product.name)
