@@ -69,11 +69,6 @@ class TargetConfig:
     # Keep rows whose target is missing instead of dropping them: a table of places and
     # dates to build cubes for, so a trained model can predict what was never measured.
     keep_missing_targets: bool = False
-    # Drop rows whose target is exactly 0. For a target derived from counts -- reads,
-    # cells -- a zero is often a non-detection rather than a measured absence, and this
-    # lets a run leave those rows out. The standardized table at processed_path is built
-    # with them already removed, so give such a config a processed_path of its own.
-    drop_zero_targets: bool = False
     # Where the standardized observation table is kept: once, shared by every run of this
     # config, instead of a copy inside each run directory. With it set a run directory
     # holds no observations and no target values -- only sample Ids and the feature cubes
@@ -125,7 +120,6 @@ class TargetConfig:
             filter_column=data.get("filter_column"),
             filter_values=[str(v) for v in data.get("filter_values", [])],
             keep_missing_targets=bool(data.get("keep_missing_targets", False)),
-            drop_zero_targets=bool(data.get("drop_zero_targets", False)),
             processed_path=(
                 None if data.get("processed_path") is None else str(data["processed_path"])
             ),

@@ -72,9 +72,6 @@ def load_target_table(config: TargetConfig) -> pd.DataFrame:
     if not config.keep_missing_targets:
         required_values += target_names
     data = data.dropna(subset=required_values).copy()
-    if config.drop_zero_targets:
-        # Like a missing output, a zero in any one output drops the whole row.
-        data = data[(data[target_names] != 0).all(axis=1)].copy()
     return data
 
 

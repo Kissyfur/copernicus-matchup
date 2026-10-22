@@ -539,30 +539,6 @@ def test_load_target_table_can_keep_rows_without_a_target(tmp_path):
     ).keep_missing_targets
 
 
-def test_load_target_table_can_drop_rows_whose_target_is_zero(tmp_path):
-    """Zeros stay by default; with drop_zero_targets a zero in any output drops the row."""
-    path = tmp_path / "obs.csv"
-    pd.DataFrame(
-        {
-            "Id": [1, 2, 3, 4],
-            "lat": 41.6,
-            "lon": 2.8,
-            "time": ["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-04"],
-            "a": [0.0, 0.2, 0.1, 0.0],
-            "b": [0.3, 0.0, 0.4, 0.0],
-        }
-    ).to_csv(path, index=False)
-    one = TargetConfig(path=str(path), target_column="a")
-    assert list(load_target_table(one)["Id"]) == [1, 2, 3, 4]
-    one.drop_zero_targets = True
-    assert list(load_target_table(one)["Id"]) == [2, 3]
-    both = TargetConfig(path=str(path), target_column=["a", "b"], drop_zero_targets=True)
-    assert list(load_target_table(both)["Id"]) == [3]
-    assert TargetConfig.from_dict(
-        {"path": "t.csv", "target_column": "y", "drop_zero_targets": True}
-    ).drop_zero_targets
-
-
 def test_load_target_table_reads_the_first_excel_sheet_by_default(tmp_path):
     """Regression: with no sheet_name, pandas returned every sheet as a dict and the load
     failed with "'dict' object has no attribute 'columns'"."""
