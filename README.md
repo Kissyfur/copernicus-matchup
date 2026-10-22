@@ -214,6 +214,7 @@ X, y = optics.sel(Id=ids), target.sel(Id=ids)
 | `sheet_name` | first sheet | Excel sheet name or index |
 | `filter_column`, `filter_values` | — | Keep only rows whose value is listed |
 | `keep_missing_targets` | `false` | Keep rows with an empty target, to build cubes for prediction |
+| `drop_zero_targets` | `false` | Drop rows whose target is exactly 0, such as non-detections in count-derived targets; give the config its own `processed_path` |
 | `processed_path` | — | Keep the standardized table here, once, instead of in every run; runs then hold only Ids |
 | `metadata_columns` | `[]` | Extra columns copied into `meta.nc` |
 | `include_spatial_metadata`, `include_day_metadata`, `include_cyclic_day_metadata` | `true` | Add lat/lon, day of year, and its cosine and sine (`x_day`, `y_day`) to `meta.nc` |
