@@ -457,6 +457,87 @@ def test_matchups_drop_windows_clipped_by_the_product_domain():
     assert matched.sizes["lat"] == 3
 
 
+def _daily_region(days: int) -> xr.Dataset:
+    lats = np.round(np.arange(40.0, 40.5, 0.0417), 4)
+    lons = np.round(np.arange(10.0, 10.5, 0.0417), 4)
+    times = pd.date_range("2020-01-01", periods=days)
+    values = np.broadcast_to(np.arange(days, dtype=float)[:, None, None], (days, len(lats), len(lons)))
+    return xr.Dataset(
+        {"v": (("time", "lat", "lon"), values.copy())},
+        coords={"time": times, "lat": lats, "lon": lons},
+    )
+
+
+def test_matchup_window_can_end_on_the_observation_day():
+    """time_window_days_before/after cut a window that is not centred on the observation:
+    here its day and the 30 before it. With require_full_time_window, an observation on
+    the product's last day still matches, since nothing after it is asked for, and one
+    with fewer than 30 days of product before it does not."""
+    region = _daily_region(60)
+    times = region["time"].values
+    observations = pd.DataFrame(
+        {"Id": [1, 2, 3], "lat": [40.2] * 3, "lon": [10.2] * 3, "time": [times[40], times[59], times[10]]}
+    )
+    config = MatchupConfig(
+        time_window_days=14, lat_threshold=10, lon_threshold=10, require_full_time_window=True,
+        time_window_days_before=30, time_window_days_after=0,
+    )
+
+    matched, unmatched = match_observations(observations, region, config)
+
+    assert list(matched["Id"].values) == [1, 2]
+    assert list(unmatched["Id"]) == [3]
+    assert matched.sizes["time"] == 31
+    # the window's last step is the observation's own day, its first the day 30 before
+    assert matched["v"].isel(Id=0, lat=0, lon=0).values.tolist() == list(range(10, 41))
+    assert matched["v"].isel(Id=1, lat=0, lon=0).values.tolist() == list(range(29, 60))
+
+
+def test_matchup_window_sides_follow_time_window_days_unless_named():
+    assert (MatchupConfig.from_dict({"time_window_days": 14}).days_before, MatchupConfig.from_dict({"time_window_days": 14}).days_after) == (14, 14)
+    one_sided = MatchupConfig.from_dict({"time_window_days": 14, "time_window_days_after": 0})
+    assert (one_sided.days_before, one_sided.days_after) == (14, 0)
+    with pytest.raises(ValueError, match="time_window_days_before"):
+        MatchupConfig.from_dict({"time_window_days_before": -1})
+
+    default = MatchupConfig.from_dict({"time_window_days_before": 30, "time_window_days_after": 0})
+    # a product that only changes the space window keeps the top level's days
+    kept = default.with_overrides({"lat_window": 0.12})
+    assert (kept.days_before, kept.days_after, kept.lat_window) == (30, 0, 0.12)
+    # one that sets time_window_days redefines its window, and keeps only the sides it names
+    redefined = default.with_overrides({"time_window_days": 2})
+    assert (redefined.days_before, redefined.days_after) == (2, 2)
+    one_side = default.with_overrides({"time_window_days": 2, "time_window_days_after": 0})
+    assert (one_side.days_before, one_side.days_after) == (2, 0)
+
+
+def _config_with(matchup: dict, preprocess: dict, product_preprocess: dict | None = None) -> dict:
+    return {
+        "target": {"path": "obs.csv", "target_column": "y"},
+        "products": [{"name": "p", "dataset_ids": ["d"], "preprocess": product_preprocess or {}}],
+        "matchup": matchup,
+        "preprocess": preprocess,
+    }
+
+
+def test_a_centred_time_selection_on_an_uneven_window_is_refused():
+    """`centered` and `past_to_center` count from the middle of the window, which is the
+    observation's day only on a symmetric window."""
+    uneven = {"time_window_days_before": 30, "time_window_days_after": 0}
+    for selection in ("centered", "past_to_center"):
+        with pytest.raises(ValueError, match="middle of the matchup window"):
+            DataConfig.from_dict(_config_with(uneven, {"time_limit": 15, "time_selection": selection}))
+        with pytest.raises(ValueError, match="middle of the matchup window"):
+            DataConfig.from_dict(
+                _config_with(uneven, {}, {"time_limit": 15, "time_selection": selection})
+            )
+    # no time_limit keeps the whole window, and first/last do not depend on its middle
+    DataConfig.from_dict(_config_with(uneven, {"time_selection": "centered"}))
+    DataConfig.from_dict(_config_with(uneven, {"time_limit": 15, "time_selection": "last"}))
+    # a symmetric window keeps its centred selections
+    DataConfig.from_dict(_config_with({"time_window_days": 14}, {"time_limit": 15, "time_selection": "centered"}))
+
+
 def test_load_target_table_filters_to_configured_values(tmp_path):
     path = tmp_path / "targets.csv"
     _write_target_csv(

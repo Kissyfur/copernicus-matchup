@@ -237,12 +237,20 @@ X, y = optics.sel(Id=ids), target.sel(Id=ids)
 |---|---|---|
 | `lat_window`, `lon_window` | `0.06` | Window half-width around the nearest grid cell, in degrees |
 | `time_window_days` | `1` | Window half-width, in days |
+| `time_window_days_before`, `time_window_days_after` | `time_window_days` | Days the window reaches before and after the observation, for a window that is not centred on it |
 | `lat_threshold`, `lon_threshold` | `0.1` | Unmatched if the nearest grid cell is at least this far away, in degrees |
 | `time_threshold_days` | `1` | Unmatched if the nearest time step is at least this far away, in days |
 | `require_full_time_window` | `false` | Drop windows with missing time steps |
 
 Observations at the edge of a product's domain get clipped windows, and are recorded as
 unmatched.
+
+For a window that uses only the days up to the observation, set the two sides:
+`time_window_days_before: 30` and `time_window_days_after: 0` cut the observation's day and the
+30 days before it. A product whose own `matchup` sets `time_window_days` redefines its window,
+and keeps only the sides it names itself. On such an uneven window, `time_selection`
+`centered` and `past_to_center` would count from the window's middle rather than from the
+observation, so a config that combines them with a `time_limit` is rejected when it loads.
 
 **`preprocess`**: the top-level section sets defaults and `products[].preprocess` overrides
 them. Keys marked *product* only work at product level.

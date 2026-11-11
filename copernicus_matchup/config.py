@@ -162,6 +162,22 @@ class ProductSpec:
         )
 
 
+def _optional_days(value: Any, key: str) -> int | None:
+    if value is None:
+        return None
+    days = int(value)
+    if days < 0:
+        raise ValueError(f"matchup.{key} must be 0 or more days. Got: {value}")
+    return days
+
+
+# The time_selection names that count from the middle of the matchup window. The middle is
+# the observation's day only when the window reaches as far on both sides of it.
+CENTRED_TIME_SELECTIONS = frozenset(
+    {"past_to_center", "center_past", "up_to_center", "centered", "center", "symmetric"}
+)
+
+
 @dataclass
 class MatchupConfig:
     lat_window: float = 0.06
@@ -171,6 +187,22 @@ class MatchupConfig:
     lon_threshold: float = 0.1
     time_threshold_days: int = 1
     require_full_time_window: bool = False
+    # Per-side overrides of time_window_days, for a window that is not centred on the
+    # observation. A side left as None follows time_window_days, so a config that names
+    # neither keeps the symmetric window. before 30 and after 0 is the observation's day
+    # and the 30 days before it, with nothing after.
+    time_window_days_before: int | None = None
+    time_window_days_after: int | None = None
+
+    @property
+    def days_before(self) -> int:
+        """Days the window reaches back from the observation's nearest time step."""
+        return self.time_window_days if self.time_window_days_before is None else self.time_window_days_before
+
+    @property
+    def days_after(self) -> int:
+        """Days the window reaches forward from the observation's nearest time step."""
+        return self.time_window_days if self.time_window_days_after is None else self.time_window_days_after
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "MatchupConfig":
@@ -183,7 +215,28 @@ class MatchupConfig:
             lon_threshold=float(data.get("lon_threshold", 0.1)),
             time_threshold_days=int(data.get("time_threshold_days", 1)),
             require_full_time_window=bool(data.get("require_full_time_window", False)),
+            time_window_days_before=_optional_days(
+                data.get("time_window_days_before"), "time_window_days_before"
+            ),
+            time_window_days_after=_optional_days(
+                data.get("time_window_days_after"), "time_window_days_after"
+            ),
         )
+
+    def with_overrides(self, overrides: dict[str, Any] | None) -> "MatchupConfig":
+        """This config with a product's `matchup` section laid over it.
+
+        A product that sets time_window_days redefines its window, so the top level's
+        per-side days do not carry over to it; only the sides the product names itself do.
+        """
+        if not overrides:
+            return self
+        data = {name: getattr(self, name) for name in MatchupConfig.__dataclass_fields__}
+        data.update(overrides)
+        if "time_window_days" in overrides:
+            for side in ("time_window_days_before", "time_window_days_after"):
+                data[side] = overrides.get(side)
+        return MatchupConfig.from_dict(data)
 
 
 @dataclass
@@ -262,13 +315,40 @@ class DataConfig:
             raise ValueError("Config must contain a 'target' section.")
         if "products" not in data or not data["products"]:
             raise ValueError("Config must contain at least one Copernicus product.")
-        return cls(
+        config = cls(
             target=TargetConfig.from_dict(data["target"]),
             products=[ProductSpec.from_dict(p) for p in data["products"]],
             matchup=MatchupConfig.from_dict(data.get("matchup")),
             preprocess=PreprocessConfig.from_dict(data.get("preprocess")),
             regrid=RegridConfig.from_dict(data.get("regrid")),
         )
+        config._check_time_selection()
+        return config
+
+    def _check_time_selection(self) -> None:
+        """Refuse a centred time_selection on a window that is not centred.
+
+        `centered` and `past_to_center` count from the middle of the window, which is the
+        observation's day only when the window is symmetric. On an uneven one they would
+        silently keep the wrong days, so the config is rejected here, before anything is
+        downloaded, rather than producing cubes that look fine.
+        """
+        for product in self.products:
+            window = self.matchup.with_overrides(product.matchup)
+            if window.days_before == window.days_after:
+                continue
+            limit = product.preprocess.get("time_limit", self.preprocess.time_limit)
+            selection = product.preprocess.get("time_selection", self.preprocess.time_selection)
+            selection = str(selection).lower().replace("-", "_")
+            if limit is not None and selection in CENTRED_TIME_SELECTIONS:
+                raise ValueError(
+                    f"Product '{product.name}': preprocess.time_selection '{selection}' counts "
+                    "from the middle of the matchup window, but the window reaches "
+                    f"{window.days_before} days before the observation and "
+                    f"{window.days_after} after it, so the middle is not the observation's "
+                    "day. Cut the days you want with matchup.time_window_days_before/after "
+                    "and leave time_limit unset, or use time_selection 'first' or 'last'."
+                )
 
 
 def load_data_config(path: str | Path) -> DataConfig:

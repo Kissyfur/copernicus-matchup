@@ -45,15 +45,15 @@ def _match_one(
     match = region.sel(
         {
             TIME: slice(
-                pd.Timestamp(near_date) - _timedelta_days(config.time_window_days),
-                pd.Timestamp(near_date) + _timedelta_days(config.time_window_days),
+                pd.Timestamp(near_date) - _timedelta_days(config.days_before),
+                pd.Timestamp(near_date) + _timedelta_days(config.days_after),
             ),
             LAT: slice(near_lat - config.lat_window, near_lat + config.lat_window),
             LON: slice(near_lon - config.lon_window, near_lon + config.lon_window),
         }
     )
     if config.require_full_time_window:
-        expected = 2 * config.time_window_days + 1
+        expected = config.days_before + config.days_after + 1
         if TIME in match.sizes and match.sizes[TIME] != expected:
             return None
 
@@ -139,11 +139,7 @@ def match_observations(
 
 
 def product_matchup_config(product: ProductSpec, default: MatchupConfig) -> MatchupConfig:
-    if not product.matchup:
-        return default
-    data = {name: getattr(default, name) for name in MatchupConfig.__dataclass_fields__}
-    data.update(product.matchup)
-    return MatchupConfig.from_dict(data)
+    return default.with_overrides(product.matchup)
 
 
 def create_product_matchups(
