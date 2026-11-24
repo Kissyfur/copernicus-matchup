@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import xarray as xr
 
@@ -22,6 +23,20 @@ def _nearest_time_distance(value, target) -> pd.Timedelta:
     return abs(pd.Timestamp(value) - pd.Timestamp(target))
 
 
+def _time_on_the_same_day(times: pd.DatetimeIndex, date) -> pd.Timestamp:
+    """The product time step on the observation's own calendar day, if there is one, and
+    the observation's time otherwise, for the nearest step to be found from.
+
+    Nearest alone goes wrong for a daily product stamped at midnight: a sample taken from
+    noon on is nearer the next day's stamp, and its window came out a day late.
+    """
+    date = pd.Timestamp(date)
+    same_day = times[times.normalize() == date.normalize()]
+    if len(same_day) == 0:
+        return date
+    return same_day[int(np.argmin(np.abs(same_day - date)))]
+
+
 def _match_one(
     obs_id,
     lat: float,
@@ -30,7 +45,8 @@ def _match_one(
     region: xr.Dataset,
     config: MatchupConfig,
 ) -> xr.Dataset | None:
-    near_point = region.sel({TIME: date, LAT: lat, LON: lon}, method="nearest")
+    day = _time_on_the_same_day(region.indexes[TIME], date)
+    near_point = region.sel({TIME: day, LAT: lat, LON: lon}, method="nearest")
     near_date = near_point[TIME].values
     near_lat = float(near_point[LAT].values)
     near_lon = float(near_point[LON].values)

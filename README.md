@@ -239,7 +239,7 @@ X, y = optics.sel(Id=ids), target.sel(Id=ids)
 | `time_window_days` | `1` | Window half-width, in days |
 | `time_window_days_before`, `time_window_days_after` | `time_window_days` | Days the window reaches before and after the observation, for a window that is not centred on it |
 | `lat_threshold`, `lon_threshold` | `0.1` | Unmatched if the nearest grid cell is at least this far away, in degrees |
-| `time_threshold_days` | `1` | Unmatched if the nearest time step is at least this far away, in days |
+| `time_threshold_days` | `1` | Unmatched if the nearest time step is at least this far away, in days. A time step on the observation's own calendar day is taken first, so a daily product stamped at midnight centres the window on the observation's day whatever its hour |
 | `require_full_time_window` | `false` | Drop windows with missing time steps |
 
 Observations at the edge of a product's domain get clipped windows, and are recorded as
@@ -262,7 +262,7 @@ them. Keys marked *product* only work at product level, and *top level* only the
 | `exclude_from_log`, `exclude_from_log1p` *product* | `[]` | Channels left untransformed |
 | `positive_quantile` | `0.01` | Raise values below this quantile of the positive values up to it; `null` disables it |
 | `interpolate_dims` *product* | `[]` | Fill gaps by linear interpolation along these dimensions |
-| `spatial_mean` *top level* | `false` | Average every window over lat and lon, missing cells left out, keeping one value per time step. Masks become the share of the window that was cloud or land. Needs `regrid.enabled: false` |
+| `spatial_mean` *top level* | `false` | Average every window over lat and lon, keeping one value per time step: after gap filling and derived channels, before the log, cells still missing left out. Masks become the share of the window that was cloud or land. Needs `regrid.enabled: false` |
 | `add_cloud_land_masks` | `true` | Append mask channels derived from missing values |
 | `mask_kinds` *product* | both | `[cloud_mask]` for an L3 product, `[land_mask]` for a gap-free L4 product |
 | `add_photoperiod` *product* | `false` | Append a daylight-hours channel |
@@ -294,18 +294,19 @@ Each product goes through these steps in order, because several of them do not c
 
 1. Cloud and land masks, computed on the untouched data
 2. Positive-quantile floor, on observed values only
-3. Spatial mean (`spatial_mean`), of data, masks and photoperiod alike. It comes before gap
-   filling, so only measured cells are averaged: a day is missing only where the whole window
-   was.
-4. Gap filling
-5. Derived channels, then anomalies
-6. Log / log1p
+3. Gap filling
+4. Derived channels, then anomalies
+5. Spatial mean (`spatial_mean`), of data, masks and photoperiod alike. Each cell has been
+   filled and its derived channels computed, so every day is averaged over the same cells;
+   cells still missing are left out, and a day is missing only where no cell could be filled.
+6. Log / log1p, of the averaged values
 7. Mask and photoperiod channels appended
 8. Time selection
 9. Coverage filter (`min_valid_ratio`). Cloud cover often correlates with the quantity being
    measured, so a strict threshold can bias the sample.
-10. `fillna`. This runs after the log, so filled values are 0 in log space. Read them together
-   with the mask channels.
+10. `fillna`. This runs after the log, so filled values are 0 in log space, which can lie far
+   outside a channel's range and skew any scaling computed from the cubes afterwards. `null`
+   keeps the gaps for a consumer that scales on real values and fills them itself.
 
 ---
 

@@ -493,6 +493,28 @@ def test_matchup_window_can_end_on_the_observation_day():
     assert matched["v"].isel(Id=1, lat=0, lon=0).values.tolist() == list(range(29, 60))
 
 
+def test_a_sample_matches_its_own_calendar_day_whatever_its_hour():
+    """A daily product is stamped at midnight. Nearest-in-time alone gave a sample taken
+    from noon on the next day's stamp, centring its window a day late."""
+    region = _daily_region(30)
+    day = pd.Timestamp(region["time"].values[10])
+    hours = [0, 9, 12, 15, 23]
+    observations = pd.DataFrame({
+        "Id": list(range(len(hours))),
+        "lat": [40.2] * len(hours),
+        "lon": [10.2] * len(hours),
+        "time": [day + pd.Timedelta(hours=hour) for hour in hours],
+    })
+    config = MatchupConfig(time_window_days=2, lat_threshold=10, lon_threshold=10, require_full_time_window=True)
+
+    matched, unmatched = match_observations(observations, region, config)
+
+    assert unmatched.empty
+    # the region's value is its day's index, so each window is days 8 to 12
+    for index in range(len(hours)):
+        assert matched["v"].isel(Id=index, lat=0, lon=0).values.tolist() == [8, 9, 10, 11, 12]
+
+
 def test_matchup_window_sides_follow_time_window_days_unless_named():
     assert (MatchupConfig.from_dict({"time_window_days": 14}).days_before, MatchupConfig.from_dict({"time_window_days": 14}).days_after) == (14, 14)
     one_sided = MatchupConfig.from_dict({"time_window_days": 14, "time_window_days_after": 0})
@@ -1200,33 +1222,26 @@ def test_land_from_an_l4_source_is_static_where_an_l3_source_tracks_the_weather(
     assert cloud[1].tolist() == [1.0, 0.0, 1.0]
 
 
-def test_a_spatial_mean_averages_measured_cells_before_any_gap_is_filled():
-    """The mean leaves missing cells out rather than filling them first, so a day stays
-    missing only where the whole window was, and the cloud mask becomes the share of the
-    window without a retrieval."""
-    nan = np.nan
-    # one sample, a window one cell high and four wide, two days; nothing is retrieved on
-    # the second day
-    days = np.array([[0.0, nan, 3.0, 9.0], [nan, nan, nan, nan]])
-    window = xr.DataArray(
-        days.T[None, None, :, :, None],
+def _one_row_window(cells_by_variable: dict[str, list[list[float]]]) -> xr.Dataset:
+    """One sample's window, one cell high, from each variable's [cell][day] values."""
+    names = list(cells_by_variable)
+    values = np.stack([np.asarray(cells_by_variable[name], dtype=float) for name in names], axis=-1)
+    width, days = values.shape[:2]
+    return xr.DataArray(
+        values[None, None],
         dims=("Id", "lat", "lon", "time", "variable"),
         coords={
             "Id": [1],
             "lat": (("Id", "lat"), [[40.0]]),
-            "lon": (("Id", "lon"), [[1.0, 1.01, 1.02, 1.03]]),
-            "time": np.arange(2),
-            "variable": ["refl"],
+            "lon": (("Id", "lon"), [np.round(1.0 + 0.01 * np.arange(width), 2)]),
+            "time": np.arange(days),
+            "variable": names,
         },
-    )
-    product = ProductSpec(
-        name="reflectance",
-        dataset_ids=["d"],
-        variables=["refl"],
-        # filling along lon first would make the first day's mean 3.375
-        preprocess={"interpolate_dims": ["lon"], "add_cloud_land_masks": True, "mask_kinds": ["cloud_mask"]},
-    )
-    config = DataConfig(
+    ).to_dataset(dim="variable")
+
+
+def _averaging_config(product: ProductSpec) -> DataConfig:
+    return DataConfig(
         target=TargetConfig(path="unused.csv", target_column="target"),
         products=[product],
         preprocess=PreprocessConfig(
@@ -1235,13 +1250,56 @@ def test_a_spatial_mean_averages_measured_cells_before_any_gap_is_filled():
         ),
     )
 
-    cube = _prepare_product_array(window.to_dataset(dim="variable"), product, config)
+
+def test_a_spatial_mean_comes_after_each_cell_is_filled_over_time():
+    """Each cell is filled from its own days first, so every day is averaged over the same
+    cells. A day stays missing only where no cell could be filled, and the cloud mask, taken
+    before the filling, is the share of the window without a retrieval."""
+    nan = np.nan
+    # two cells, four days: the first cell misses day 2, and nothing is retrieved on day 4
+    window = _one_row_window({"refl": [[1.0, nan, 3.0, nan], [5.0, 5.0, 5.0, nan]]})
+    masks = {"add_cloud_land_masks": True, "mask_kinds": ["cloud_mask"]}
+    filled = ProductSpec(name="reflectance", dataset_ids=["d"], variables=["refl"],
+                         preprocess={"interpolate_dims": ["time"], **masks})
+    unfilled = ProductSpec(name="reflectance", dataset_ids=["d"], variables=["refl"], preprocess=masks)
+
+    cube = _prepare_product_array(window, filled, _averaging_config(filled))
 
     assert (cube.sizes["lat"], cube.sizes["lon"]) == (1, 1)
     refl = cube.sel(variable="refl").values.ravel()
-    assert refl[0] == 4.0
-    assert np.isnan(refl[1])
-    assert cube.sel(variable="cloud_mask").values.ravel().tolist() == [0.25, 1.0]
+    # day 2 averages the first cell's interpolated 2 with the second cell's 5
+    assert refl[:3].tolist() == [3.0, 3.5, 4.0]
+    # a trailing gap cannot be interpolated, so day 4 stays missing
+    assert np.isnan(refl[3])
+    assert cube.sel(variable="cloud_mask").values.ravel().tolist() == [0.0, 0.5, 0.0, 1.0]
+
+    # without filling, day 2 is the mean of the one cell measured
+    refl = _prepare_product_array(window, unfilled, _averaging_config(unfilled)).sel(variable="refl")
+    assert refl.values.ravel()[1] == 5.0
+
+
+def test_a_spatial_mean_takes_derived_channels_per_cell_and_comes_before_the_log():
+    """A current's speed is the mean of the cells' speeds, not the speed of the mean
+    current, and a logged channel is the log of the mean, not the mean of the logs."""
+    window = _one_row_window({
+        "uo": [[1.0], [-1.0]],
+        "vo": [[0.0], [0.0]],
+        "chl": [[1.0], [np.e ** 2]],
+    })
+    product = ProductSpec(
+        name="p", dataset_ids=["d"], variables=["uo", "vo", "chl"],
+        preprocess={
+            "derived_variables": [{"name": "speed", "expression": "(uo ** 2 + vo ** 2) ** 0.5"}],
+            "log": True, "exclude_from_log": ["uo", "vo", "speed"],
+        },
+    )
+
+    cube = _prepare_product_array(window, product, _averaging_config(product))
+
+    values = {name: float(cube.sel(variable=name).values.ravel()[0]) for name in ("uo", "speed", "chl")}
+    assert values["uo"] == 0.0
+    assert values["speed"] == 1.0
+    assert np.isclose(values["chl"], np.log((1.0 + np.e ** 2) / 2))
 
 
 def test_coverage_is_the_same_on_a_window_averaged_over_space():

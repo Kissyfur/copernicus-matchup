@@ -320,16 +320,6 @@ def _prepare_product_array(
         )
         data = positive_quantile(data, quantile=float(quantile), dims=quantile_dims)
 
-    # The spatial mean comes after the masks and the floor, which need each cell, and
-    # before any gap is filled, so it averages measured cells only: a day stays missing
-    # only where the whole window was, and a mask becomes the share of the window that was
-    # cloud or land.
-    if defaults.preprocess.spatial_mean:
-        data, cloud_mask, land_mask, photoperiod = [
-            None if array is None else _spatial_mean(array)
-            for array in (data, cloud_mask, land_mask, photoperiod)
-        ]
-
     # Only now fill the gaps. Derived variables and anomalies are computed after this so
     # they are not riddled with holes propagated from their inputs; moving this below the
     # log/log1p block instead would interpolate in log space, which is a one-line change
@@ -340,6 +330,18 @@ def _prepare_product_array(
 
     data = _add_derived_variables(data, product)
     data = _add_anomaly_variables(data, product)
+
+    # The spatial mean comes after each cell has been filled and its derived channels
+    # computed, so every day is averaged over the same cells, and a current's speed is the
+    # mean of the cells' speeds. It comes before the log, so the values are averaged, not
+    # their logs. Cells still missing are left out: a day stays missing only where no cell
+    # could be filled. The masks, taken before any filling, become the share of the window
+    # without a retrieval, or on land.
+    if defaults.preprocess.spatial_mean:
+        data, cloud_mask, land_mask, photoperiod = [
+            None if array is None else _spatial_mean(array)
+            for array in (data, cloud_mask, land_mask, photoperiod)
+        ]
 
     if bool(_option(product, "log", defaults.preprocess.log_products)):
         data = _transform_except_variables(data, _safe_log, as_list(_option(product, "exclude_from_log", None)))
