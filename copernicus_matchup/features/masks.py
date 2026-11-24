@@ -76,8 +76,15 @@ def valid_water_coverage(
     land_mask: xr.DataArray,
     dims: tuple[str, ...] = ("lat", "lon", "time"),
 ) -> xr.DataArray:
+    """The share of the window's water that has a retrieval.
+
+    The two masks never overlap: where one product supplies both,
+    `get_cloud_and_land_masks` keeps cloud off land, and where it supplies only cloud,
+    land comes in as zeros. So a cell's clear share is 1 - land - cloud. That counts 0/1
+    cells, and, being linear, holds as well for a window averaged over space, whose masks
+    are the shares of each day that were land and cloud. A test of `cloud == 0` would
+    count only the averaged days with no cloud at all.
+    """
     dims = tuple(dim for dim in dims if dim in cloud_mask.dims)
-    water_zone = land_mask == 0
-    total_water_pixels = water_zone.sum(dim=dims)
-    useful_pixels = water_zone & (cloud_mask == 0)
-    return useful_pixels.sum(dim=dims) / total_water_pixels
+    water = 1 - land_mask
+    return (water - cloud_mask).sum(dim=dims) / water.sum(dim=dims)

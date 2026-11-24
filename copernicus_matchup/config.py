@@ -249,6 +249,9 @@ class PreprocessConfig:
     time_limit: int | None = None
     time_selection: str = "first"
     prefix_variables: bool = False
+    # Average every window over lat and lon, leaving one value per time step. Set for the
+    # whole config only: cubes of different grids could not be stacked into one input.
+    spatial_mean: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "PreprocessConfig":
@@ -262,6 +265,7 @@ class PreprocessConfig:
             time_limit=data.get("time_limit"),
             time_selection=str(data.get("time_selection", "first")).lower(),
             prefix_variables=bool(data.get("prefix_variables", False)),
+            spatial_mean=bool(data.get("spatial_mean", False)),
         )
 
 

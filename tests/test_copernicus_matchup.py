@@ -1198,3 +1198,78 @@ def test_land_from_an_l4_source_is_static_where_an_l3_source_tracks_the_weather(
     cloud = missing_mask(l3).transpose("Id", "time", "lat", "variable").values[:, 0, :, 0]
     assert cloud[0].tolist() == [1.0, 0.0, 0.0]
     assert cloud[1].tolist() == [1.0, 0.0, 1.0]
+
+
+def test_a_spatial_mean_averages_measured_cells_before_any_gap_is_filled():
+    """The mean leaves missing cells out rather than filling them first, so a day stays
+    missing only where the whole window was, and the cloud mask becomes the share of the
+    window without a retrieval."""
+    nan = np.nan
+    # one sample, a window one cell high and four wide, two days; nothing is retrieved on
+    # the second day
+    days = np.array([[0.0, nan, 3.0, 9.0], [nan, nan, nan, nan]])
+    window = xr.DataArray(
+        days.T[None, None, :, :, None],
+        dims=("Id", "lat", "lon", "time", "variable"),
+        coords={
+            "Id": [1],
+            "lat": (("Id", "lat"), [[40.0]]),
+            "lon": (("Id", "lon"), [[1.0, 1.01, 1.02, 1.03]]),
+            "time": np.arange(2),
+            "variable": ["refl"],
+        },
+    )
+    product = ProductSpec(
+        name="reflectance",
+        dataset_ids=["d"],
+        variables=["refl"],
+        # filling along lon first would make the first day's mean 3.375
+        preprocess={"interpolate_dims": ["lon"], "add_cloud_land_masks": True, "mask_kinds": ["cloud_mask"]},
+    )
+    config = DataConfig(
+        target=TargetConfig(path="unused.csv", target_column="target"),
+        products=[product],
+        preprocess=PreprocessConfig(
+            spatial_mean=True, positive_quantile=None, log_products=False, fillna=None,
+            add_cloud_land_masks=False,
+        ),
+    )
+
+    cube = _prepare_product_array(window.to_dataset(dim="variable"), product, config)
+
+    assert (cube.sizes["lat"], cube.sizes["lon"]) == (1, 1)
+    refl = cube.sel(variable="refl").values.ravel()
+    assert refl[0] == 4.0
+    assert np.isnan(refl[1])
+    assert cube.sel(variable="cloud_mask").values.ravel().tolist() == [0.25, 1.0]
+
+
+def test_coverage_is_the_same_on_a_window_averaged_over_space():
+    """So the coverage filter keeps the same samples whether or not the windows are
+    averaged. Land is zero, as it is wherever the cloud mask comes from an L3 product."""
+    from copernicus_matchup.features.masks import valid_water_coverage
+
+    cloud = xr.DataArray(
+        np.random.default_rng(0).integers(0, 2, (3, 4, 4, 5)).astype(np.float32),
+        dims=("Id", "lat", "lon", "time"),
+    )
+    land = xr.zeros_like(cloud)
+    averaged = [mask.mean(["lat", "lon"]).expand_dims(lat=1, lon=1) for mask in (cloud, land)]
+
+    np.testing.assert_allclose(valid_water_coverage(*averaged), valid_water_coverage(cloud, land), rtol=1e-6)
+
+
+def test_a_spatial_mean_is_set_for_every_product_and_refuses_a_regrid(tmp_path):
+    target = TargetConfig(path="unused.csv", target_column="target")
+    product = ProductSpec(name="p", dataset_ids=["d"], variables=["v"])
+
+    regridded = DataConfig(
+        target=target, products=[product], preprocess=PreprocessConfig(spatial_mean=True),
+        regrid=RegridConfig(enabled=True, reference_group="p"),
+    )
+    with pytest.raises(ValueError, match="regrid.enabled: false"):
+        preprocess_matchups(regridded, tmp_path)
+
+    per_product = ProductSpec(name="p", dataset_ids=["d"], variables=["v"], preprocess={"spatial_mean": True})
+    with pytest.raises(ValueError, match="top-level preprocess block"):
+        preprocess_matchups(DataConfig(target=target, products=[per_product]), tmp_path)

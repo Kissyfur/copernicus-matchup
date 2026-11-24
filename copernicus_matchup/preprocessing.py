@@ -247,6 +247,32 @@ def _photoperiod_channel(data: xr.DataArray) -> xr.DataArray:
     return photoperiod.astype(np.float32).expand_dims({VARIABLE: ["photoperiod"]})
 
 
+def _spatial_mean(data: xr.DataArray) -> xr.DataArray:
+    """The window averaged over lat and lon, missing cells left out. Lat and lon stay, one
+    cell each, so the cube keeps the five dimensions every consumer expects."""
+    return data.mean(dim=["lat", "lon"], skipna=True).expand_dims(lat=1, lon=1)
+
+
+def _check_spatial_mean(config: DataConfig) -> None:
+    """Refuse a spatial mean the cubes could not honour.
+
+    It is set once, for every product: a product left unaveraged would keep its grid, and
+    cubes of different grids cannot be stacked into one input. Nor can an averaged window
+    be regridded, since it no longer has a grid.
+    """
+    named = [product.name for product in config.products if "spatial_mean" in product.preprocess]
+    if named:
+        raise ValueError(
+            f"preprocess.spatial_mean is set on product(s) {named}. It applies to every "
+            "product at once: set it in the top-level preprocess block."
+        )
+    if config.preprocess.spatial_mean and config.regrid.enabled:
+        raise ValueError(
+            "preprocess.spatial_mean leaves each window one cell wide, so there is no grid "
+            "to regrid onto. Set regrid.enabled: false."
+        )
+
+
 def _prepare_product_array(
     ds: xr.Dataset,
     product: ProductSpec,
@@ -293,6 +319,16 @@ def _prepare_product_array(
             _option(product, "positive_quantile_dims", ("Id", "time", "lat", "lon"))
         )
         data = positive_quantile(data, quantile=float(quantile), dims=quantile_dims)
+
+    # The spatial mean comes after the masks and the floor, which need each cell, and
+    # before any gap is filled, so it averages measured cells only: a day stays missing
+    # only where the whole window was, and a mask becomes the share of the window that was
+    # cloud or land.
+    if defaults.preprocess.spatial_mean:
+        data, cloud_mask, land_mask, photoperiod = [
+            None if array is None else _spatial_mean(array)
+            for array in (data, cloud_mask, land_mask, photoperiod)
+        ]
 
     # Only now fill the gaps. Derived variables and anomalies are computed after this so
     # they are not riddled with holes propagated from their inputs; moving this below the
@@ -554,6 +590,7 @@ def preprocess_matchups(
     With `target.processed_path` set the target is not written into the run at all; the
     run keeps only the cubes and `meta`, and `load_target` rebuilds the target by Id.
     """
+    _check_spatial_mean(config)
     layout = RunLayout(run_root)
     datasets_dir = layout.datasets
     datasets_dir.mkdir(parents=True, exist_ok=True)
